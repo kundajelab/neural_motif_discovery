@@ -1,6 +1,6 @@
 tfname=$1
 indir=/users/amtseng/att_priors/data/raw/ENCODE/$tfname/tf_chipseq
-outdir=/users/amtseng/att_priors/data/processed/ENCODE/binary/labels/$tfname
+outdir=/users/amtseng/att_priors/data/interim/ENCODE/binary/labels/$tfname
 
 bglimit=150000
 

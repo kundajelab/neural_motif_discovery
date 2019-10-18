@@ -54,7 +54,7 @@ def download_file(download_url, save_path):
 def download_exp_files(exp_file_table, exp_id, save_dir):
     """
     Downloads some data for the given experiment. Specifically, this downloads
-    the (filtered) alignment BAM for the ChIP-seq run, the set of called peaks
+    the unfiltered alignment BAM for the ChIP-seq run, the set of called peaks
     (input to IDR), and the set of optimal IDR-filtered peaks. If some of these
     files do not exist, they will not be downloaded.
     The files are saved with the following format in `save_dir`:
@@ -64,12 +64,12 @@ def download_exp_files(exp_file_table, exp_id, save_dir):
     the most replicates.
     """
     out_to_keep = [
-        ("alignments", "bam"),
+        ("unfiltered alignments", "bam"),
         ("peaks and background as input for IDR", "bed narrowPeak"),
         ("optimal IDR thresholded peaks", "bed narrowPeak")
     ]
     shorten_out_type = {
-        "alignments": "align",
+        "unfiltered alignments": "align-unfilt",
         "peaks and background as input for IDR": "peaks-all",
         "optimal IDR thresholded peaks": "peaks-optimal"
     }

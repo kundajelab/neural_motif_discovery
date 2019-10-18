@@ -9,17 +9,11 @@ dataset_ex = sacred.Experiment("dataset")
 
 @dataset_ex.config
 def config():
-    # Mapping of bound state to numerical value
-    states_map = {"U": 0, "B": 1, "A": -1}
-
-    # Whether we need to convert states to numbers
-    convert_states = True
-
     # When computing model output metrics, ignore outputs of this value
-    output_ignore_value = states_map["A"]
+    output_ignore_value = -1
 
     # Path to reference genome FASTA
-    reference_fasta = "/users/amtseng/genomes/hg19.fasta"
+    reference_fasta = "/users/amtseng/genomes/hg38.fasta"
 
     # For each input sequence in the raw data, center it and pad to this length 
     input_length = 1000
@@ -46,16 +40,6 @@ def config():
     dataset_seed = None
 
 
-@dataset_ex.capture
-def states_to_vals(table, states_map):
-    """
-    From a DataFrame whose columns are states (U, B, or A), converts them all
-    into numerical values using `states_map`. This function will CHANGE `table`!
-    """
-    for colname in table:
-        table[colname] = table[colname].replace(states_map)
-
-
 class CoordsToVals():
     """
     From a single gzipped BED file containing genomic coordinates and more
@@ -69,7 +53,7 @@ class CoordsToVals():
         `convert_states`: Whether or not the states need to be convered to
             numerical values
     """
-    def __init__(self, gzipped_bed_file, hastitle=False, convert_states=True):
+    def __init__(self, gzipped_bed_file, hastitle=False):
         self.gzipped_bed_file = gzipped_bed_file
 
         header = 0 if hastitle else None
@@ -87,13 +71,6 @@ class CoordsToVals():
             list(coord_val_table.columns[:3]), inplace=True
         )
         print(str((datetime.now() - start).seconds) + "s")
-
-        if convert_states:
-            # Convert output states to numerical values
-            print("\tConverting states to values...", end=" ", flush=True)
-            start = datetime.now()
-            states_to_vals(coord_val_table)
-            print(str((datetime.now() - start).seconds) + "s")
 
         self.coord_val_table = coord_val_table
 
@@ -277,8 +254,8 @@ class CoordDataset(torch.utils.data.IterableDataset):
 @dataset_ex.capture
 def data_loader_from_bedfile(
     bedfile_path, batch_size, reference_fasta, input_length,
-    positive_stride, negative_stride, num_workers, convert_states, revcomp,
-    dataset_seed, hastitle=True, shuffle=True, return_coords=False
+    positive_stride, negative_stride, num_workers, revcomp, dataset_seed,
+    hastitle=True, shuffle=True, return_coords=False
 ):
     """
     From the path to a gzipped BED file containing coordinates and state labels,
@@ -287,7 +264,7 @@ def data_loader_from_bedfile(
     """
     # Maps set of coordinates to state values, imported from a BED file
     coords_to_vals = CoordsToVals(
-        bedfile_path, hastitle=hastitle, convert_states=convert_states
+        bedfile_path, hastitle=hastitle
     )
 
     # Get the set of coordinates as a Pandas MultiIndex and pass it to the
@@ -364,7 +341,6 @@ def main():
 
     base_path = "/users/amtseng/att_priors/data/"
 
-    # ENCODE:
     bedfile = os.path.join(
         base_path,
         "processed/ENCODE/binary/labels/{0}/{0}_holdout_labels.bed.gz".format(tfname)
