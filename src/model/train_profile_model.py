@@ -1,6 +1,5 @@
 import numpy as np
 import sacred
-import torch
 import math
 import tqdm
 import os

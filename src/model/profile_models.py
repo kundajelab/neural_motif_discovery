@@ -1,7 +1,7 @@
-import torch
 import math
 import numpy as np
-from model.util import sanitize_sacred_arguments, convolution_size
+import keras
+from model.util import convolution_size
 
 def multinomial_log_probs(category_log_probs, trials, query_counts):
     """

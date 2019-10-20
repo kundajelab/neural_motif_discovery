@@ -103,9 +103,11 @@ venv.bak/
 # mypy
 .mypy_cache/
 
-# Vim
-*.swp
+# vim swap
+.*.swp
 
-/models/
-/data/*
-!/data/README.md
+# Saved models
+models/
+
+# Temporary files
+temp/
