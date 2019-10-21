@@ -5,12 +5,11 @@ import tqdm
 import os
 import model.util as util
 import model.profile_models as profile_models
-import model.performance as performance
 import feature.make_profile_dataset as make_profile_dataset
 
 MODEL_DIR = os.environ.get(
     "MODEL_DIR",
-    "/users/amtseng/att_priors/models/trained_profile_models/"
+    "/users/amtseng/tfmodisco/models/trained_profile_models/"
 )
 
 train_ex = sacred.Experiment("train", ingredients=[
@@ -34,8 +33,8 @@ def config(dataset):
     dil_conv_stride = 1
 
     # Number of filters to use for each dilating convolutional layer (i.e.
-    # number of channels to output)
-    dil_conv_depths = [64] * num_dil_conv_layers
+    # number of channels to output in each layer)
+    dil_conv_depths = 64
 
     # Dilation values for each of the dilating convolutional layers
     dil_conv_dilations = [2 ** i for i in range(num_dil_conv_layers)]
@@ -101,7 +100,7 @@ def create_model(
     """
     Creates a profile model using the configuration above.
     """
-    prof_model = profile_models.ProfileTFBindingPredictor(
+    prof_model = profile_models.profile_tf_binding_predictor(
         input_length=input_length,
         input_depth=input_depth,
         profile_length=profile_length,
@@ -140,7 +139,7 @@ def model_loss(
     If the attribution prior loss is not computed at all, then 0 will be in its
     place, instead.
     """
-    corr_loss = model.correctness_loss(
+    corr_loss = profile_models.correctness_loss(
         true_profs, log_pred_profs, log_pred_counts, counts_loss_weight
     )
     

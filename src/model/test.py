@@ -3,6 +3,8 @@ import model.profile_models as profile_models
 import model.util as util
 import numpy as np
 import tensorflow as tf
+import keras.optimizers
+import tqdm
 
 ex = sacred.Experiment("ex", ingredients=[
 ])
@@ -32,8 +34,6 @@ def main():
 
     model = create_model()
 
-    model.summary()
-
     np.random.seed(20191013)
     x = np.random.randint(2, size=[10, 1346, 4])
     y = (
@@ -41,11 +41,26 @@ def main():
         np.random.randint(5, size=[10, 3, 1000, 2])
     )
 
-    input_seq = tf.to_float(tf.convert_to_tensor(x))
-    tf_prof = tf.to_float(tf.convert_to_tensor(y[0]))
-    cont_prof = tf.to_float(tf.convert_to_tensor(y[1]))
+    # input_seq = tf.to_float(tf.convert_to_tensor(x))
+    # tf_prof = tf.to_float(tf.convert_to_tensor(y[0]))
+    # cont_prof = tf.to_float(tf.convert_to_tensor(y[1]))
+    input_seq = x
+    tf_prof, cont_prof = y
 
-    pred_prof, pred_count = model([input_seq, cont_prof])
+    tf_count = np.sum(tf_prof, axis=2)
 
-    loss = profile_models.correctness_loss(tf_prof, pred_prof, pred_count, 1)
-    print(loss) 
+    model.compile(
+        keras.optimizers.Adam(lr=0.05),
+        loss=[
+            lambda x, y: profile_models.profile_loss(x, y, 10, 3),
+            lambda x, y: profile_models.count_loss(x, y, 10, 3)
+        ],
+        loss_weights=[1, 100]
+    )
+    
+    t_iter = tqdm.trange(2000, desc="\tTraining loss: ---")
+    for _ in t_iter:
+        losses = model.train_on_batch([input_seq, cont_prof], [tf_prof, tf_count])
+        t_iter.set_description(
+            "\tTraining loss: %6.2f" % losses[0]
+        )

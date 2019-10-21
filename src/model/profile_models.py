@@ -197,16 +197,12 @@ def profile_tf_binding_predictor(
     return model
 
 
-def correctness_loss(
-    true_profs, logit_pred_profs, log_pred_counts, count_loss_weight
-):
+def profile_loss(true_profs, logit_pred_profs, batch_size, num_tasks):
     """
-    Returns the loss of the correctness off the predicted profiles and
-    predicted read counts. This prediction correctness loss is split into a
-    profile loss and a count loss. The profile loss is the -log probability
-    of seeing the true profile read counts, given the multinomial
-    distribution defined by the predicted profile count probabilities. The
-    count loss is a simple mean squared error on the log counts.
+    Returns the loss of the correctness off the predicted profiles. The profile
+    loss is the -log probability of seeing the true profile read counts, given
+    the multinomial distribution defined by the predicted profile count
+    probabilities.
     Arguments:
         `true_profs`: a B x T x O x 2 tensor containing true UNnormalized
             profile values, where B is the batch size, T is the number of
@@ -214,16 +210,10 @@ def correctness_loss(
             the raw read count for that task
         `logit_pred_profs`: a B x T x O x 2 tensor containing the predicted
             profile _logits_
-        `log_pred_counts`: a B x T x 2 tensor containing the predicted log
-            read counts
-        `count_loss_weight`: amount to weight the portion of the loss for
-            the counts
+        `batch_size`: the batch size B
+        `num_tasks`: the number of tasks T
     Returns a scalar loss tensor.
     """
-    assert true_profs.shape == logit_pred_profs.shape
-    batch_size = true_profs.shape[0].value
-    num_tasks = true_profs.shape[1].value
-
     # Reshape the inputs to be flat along the tasks dimension
     true_profs = tf.reshape(
         tf.transpose(true_profs, perm=(0, 1, 3, 2)),
@@ -233,21 +223,15 @@ def correctness_loss(
         tf.transpose(logit_pred_profs, perm=(0, 1, 3, 2)),
         (batch_size, num_tasks * 2, -1)
     )  # Shape: B x 2T x O
-    log_pred_counts = tf.reshape(log_pred_counts, (batch_size, num_tasks * 2))
-    # Shape: B x 2T
-
-    # Add the profiles together to get the raw counts
-    true_counts = tf.reduce_sum(true_profs, axis=2)  # Shape: B x 2T
-
-    # 1. Profile loss
-    # Compute the log probabilities based on multinomial distributions,
-    # each one is based on predicted probabilities, one for each track
 
     # Convert logits to log probabilities and normalize
     sig_pred_profs = tf.sigmoid(logit_pred_profs)
     sig_sums = tf.reduce_sum(sig_pred_profs, axis=1, keep_dims=True)
     norm_sig_pred_profs = tf.divide(sig_pred_profs, sig_sums)
     log_pred_profs = tf.log(norm_sig_pred_profs)  # Log probs; shape: B x 2T
+
+    # Compute the true read counts from the true profile
+    true_counts = tf.reduce_sum(true_profs, axis=2)
 
     # Compute probability of seeing true profile under distribution of log
     # predicted probs
@@ -257,7 +241,25 @@ def correctness_loss(
     batch_prof_loss = tf.reduce_mean(-log_probs, axis=1)  # Average across tasks
     prof_loss = tf.reduce_mean(batch_prof_loss)  # Average across batch
 
-    # 2. Counts loss
+    return prof_loss
+
+
+def count_loss(true_counts, log_pred_counts, batch_size, num_tasks):
+    """
+    Returns the loss of the correctness off the predicted read counts. The count
+    loss is a simple mean squared error on the log counts.
+    Arguments:
+        `true_counts`: a B x T x 2 tensor containing the true read counts
+        `log_pred_counts`: a B x T x 2 tensor containing the predicted log
+            read counts
+        `batch_size`: the batch size B
+        `num_tasks`: the number of tasks T
+    Returns a scalar loss tensor.
+    """
+    true_counts = tf.reshape(true_counts, (batch_size, num_tasks * 2))
+    log_pred_counts = tf.reshape(log_pred_counts, (batch_size, num_tasks * 2))
+    # Shape: B x 2T
+
     # Mean squared error on the log counts (with 1 added for stability)
     log_true_counts = tf.log(true_counts + 1)
 
@@ -265,4 +267,4 @@ def correctness_loss(
     batch_count_loss = tf.reduce_mean(sq_diffs, axis=1)  # Average acorss tasks
     count_loss = tf.reduce_mean(batch_count_loss)  # average across batch
 
-    return prof_loss + (count_loss_weight * count_loss)
+    return count_loss
