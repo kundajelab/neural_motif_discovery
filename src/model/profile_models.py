@@ -26,11 +26,11 @@ def multinomial_log_probs(category_log_probs, trials, query_counts):
     # Multinomial probability = n! / (x1!...xk!) * p1^x1 * ... pk^xk
     # Log prob = log(n!) - (log(x1!) ... + log(xk!)) + x1log(p1) ... + xklog(pk)
 
-    log_n_fact = torch.lgamma(trials.float() + 1)
-    log_counts_fact = torch.lgamma(query_counts.float() + 1)
-    log_counts_fact_sum = torch.sum(log_counts_fact, dim=-1)
-    log_prob_pows = category_log_probs * query_counts  # Elementwise sum
-    log_prob_pows_sum = torch.sum(log_prob_pows, dim=-1)
+    log_n_fact = tf.math.lgamma(trials + 1)
+    log_counts_fact = tf.math.lgamma(query_counts + 1)
+    log_counts_fact_sum = tf.reduce_sum(log_counts_fact, axis=-1)
+    log_prob_pows = category_log_probs * query_counts  # Elementwise product
+    log_prob_pows_sum = tf.reduce_sum(log_prob_pows, axis=-1)
 
     return log_n_fact - log_counts_fact_sum + log_prob_pows_sum
 
@@ -233,38 +233,36 @@ def correctness_loss(
         tf.transpose(logit_pred_profs, perm=(0, 1, 3, 2)),
         (batch_size, num_tasks * 2, -1)
     )  # Shape: B x 2T x O
-    log_pred_counts = log_pred_counts.view(batch_size, num_tasks * 2)  # Shape:
-    #   B x 2T
+    log_pred_counts = tf.reshape(log_pred_counts, (batch_size, num_tasks * 2))
+    # Shape: B x 2T
 
     # Add the profiles together to get the raw counts
-    true_counts = torch.sum(true_profs, dim=2)
+    true_counts = tf.reduce_sum(true_profs, axis=2)  # Shape: B x 2T
 
     # 1. Profile loss
     # Compute the log probabilities based on multinomial distributions,
     # each one is based on predicted probabilities, one for each track
 
     # Convert logits to log probabilities and normalize
-    sig_pred_profs = self.sigmoid(logit_pred_profs)
-    sig_sums = torch.sum(sig_pred_profs, dim=-1).unsqueeze(-1).repeat(
-        1, 1, sig_pred_profs.size(-1)
-    )
-    norm_sig_pred_profs = torch.div(sig_pred_profs, sig_sums)
-    log_pred_profs = torch.log(norm_sig_pred_profs)  # Log probs
+    sig_pred_profs = tf.sigmoid(logit_pred_profs)
+    sig_sums = tf.reduce_sum(sig_pred_profs, axis=1, keep_dims=True)
+    norm_sig_pred_profs = tf.divide(sig_pred_profs, sig_sums)
+    log_pred_profs = tf.log(norm_sig_pred_profs)  # Log probs; shape: B x 2T
 
     # Compute probability of seeing true profile under distribution of log
     # predicted probs
     log_probs = multinomial_log_probs(
         log_pred_profs, true_counts, true_profs
     )
-    batch_prof_loss = torch.mean(-log_probs, dim=1)  # Average across tasks
-    prof_loss = torch.mean(batch_prof_loss)  # Average across batch
+    batch_prof_loss = tf.reduce_mean(-log_probs, axis=1)  # Average across tasks
+    prof_loss = tf.reduce_mean(batch_prof_loss)  # Average across batch
 
     # 2. Counts loss
     # Mean squared error on the log counts (with 1 added for stability)
-    log_true_counts = torch.log(true_counts + 1)
+    log_true_counts = tf.log(true_counts + 1)
 
-    mse = self.mse_loss(log_pred_counts, log_true_counts)
-    batch_count_loss = torch.mean(mse, dim=1)  # Average acorss tasks
-    count_loss = torch.mean(batch_count_loss)  # average across batch
+    sq_diffs = tf.math.squared_difference(log_pred_counts, log_true_counts)
+    batch_count_loss = tf.reduce_mean(sq_diffs, axis=1)  # Average acorss tasks
+    count_loss = tf.reduce_mean(batch_count_loss)  # average across batch
 
     return prof_loss + (count_loss_weight * count_loss)
