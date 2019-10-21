@@ -197,7 +197,7 @@ def profile_tf_binding_predictor(
     return model
 
 
-def profile_loss(true_profs, logit_pred_profs, batch_size, num_tasks):
+def profile_loss(true_profs, logit_pred_profs, num_tasks, profile_length):
     """
     Returns the loss of the correctness off the predicted profiles. The profile
     loss is the -log probability of seeing the true profile read counts, given
@@ -210,18 +210,18 @@ def profile_loss(true_profs, logit_pred_profs, batch_size, num_tasks):
             the raw read count for that task
         `logit_pred_profs`: a B x T x O x 2 tensor containing the predicted
             profile _logits_
-        `batch_size`: the batch size B
         `num_tasks`: the number of tasks T
+        `profile_length`: the length of the profile outputs O
     Returns a scalar loss tensor.
     """
     # Reshape the inputs to be flat along the tasks dimension
     true_profs = tf.reshape(
         tf.transpose(true_profs, perm=(0, 1, 3, 2)),
-        (batch_size, num_tasks * 2, -1)
+        (-1, num_tasks * 2, profile_length)
         )  # Shape: B x 2T x O
     logit_pred_profs = tf.reshape(
         tf.transpose(logit_pred_profs, perm=(0, 1, 3, 2)),
-        (batch_size, num_tasks * 2, -1)
+        (-1, num_tasks * 2, profile_length)
     )  # Shape: B x 2T x O
 
     # Convert logits to log probabilities and normalize
@@ -244,7 +244,7 @@ def profile_loss(true_profs, logit_pred_profs, batch_size, num_tasks):
     return prof_loss
 
 
-def count_loss(true_counts, log_pred_counts, batch_size, num_tasks):
+def count_loss(true_counts, log_pred_counts, num_tasks):
     """
     Returns the loss of the correctness off the predicted read counts. The count
     loss is a simple mean squared error on the log counts.
@@ -252,12 +252,11 @@ def count_loss(true_counts, log_pred_counts, batch_size, num_tasks):
         `true_counts`: a B x T x 2 tensor containing the true read counts
         `log_pred_counts`: a B x T x 2 tensor containing the predicted log
             read counts
-        `batch_size`: the batch size B
         `num_tasks`: the number of tasks T
     Returns a scalar loss tensor.
     """
-    true_counts = tf.reshape(true_counts, (batch_size, num_tasks * 2))
-    log_pred_counts = tf.reshape(log_pred_counts, (batch_size, num_tasks * 2))
+    true_counts = tf.reshape(true_counts, (-1, num_tasks * 2))
+    log_pred_counts = tf.reshape(log_pred_counts, (-1, num_tasks * 2))
     # Shape: B x 2T
 
     # Mean squared error on the log counts (with 1 added for stability)
