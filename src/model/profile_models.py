@@ -1,7 +1,8 @@
 import math
 import numpy as np
-import keras
-from model.util import convolution_size
+import keras.layers as kl
+import keras.models as km
+import tensorflow as tf
 
 def multinomial_log_probs(category_log_probs, trials, query_counts):
     """
@@ -34,277 +35,236 @@ def multinomial_log_probs(category_log_probs, trials, query_counts):
     return log_n_fact - log_counts_fact_sum + log_prob_pows_sum
 
 
-class ProfileTFBindingPredictor(torch.nn.Module):
+def profile_tf_binding_predictor(
+    input_length, input_depth, profile_length, num_tasks, num_dil_conv_layers,
+    dil_conv_filter_sizes, dil_conv_stride, dil_conv_dilations, dil_conv_depths,
+    prof_conv_kernel_size, prof_conv_stride
+):
+    """
+    Creates a TF binding profile predictor from a DNA sequence.
+    Arguments:
+        `input_length`: length of the input sequences; each input sequence would
+            be I x D, where I is the input length
+        `input_depth`: depth of the input sequences; each input sequence would
+            be I x D, where D is the depth
+        `profile_length`: length of the predicted profiles; it must be
+            consistent with the convolutional layers specified
+        `num_tasks`: number of tasks that are to be predicted; there will be two
+            profiles and two read counts predicted for each task
+        `num_dil_conv_layers`: number of dilating convolutional layers
+        `dil_conv_filter_sizes`: sizes of the initial dilating convolutional
+            filters; must have `num_conv_layers` entries
+        `dil_conv_stride`: stride used for each dilating convolution
+        `dil_conv_dilations`: dilations used for each layer of the dilating
+            convolutional layers
+        `dil_conv_depths`: depths of the dilating convolutional filters; must
+            be a single number (i.e. same depth for all layers)
+        `prof_conv_kernel_size`: size of the large convolutional filter used for
+            profile prediction
+        `prof_conv_stride`: stride used for the large profile convolution
 
-    def __init__(
-        self, input_length, input_depth, profile_length, num_tasks,
-        num_dil_conv_layers, dil_conv_filter_sizes, dil_conv_stride,
-        dil_conv_dilations, dil_conv_depths, prof_conv_kernel_size,
-        prof_conv_stride
-    ):
-        """
-        Creates a TF binding profile predictor from a DNA sequence.
-        Arguments:
-            `input_length`: length of the input sequences; each input sequence
-                would be D x L, where L is the length
-            `input_depth`: depth of the input sequences; each input sequence
-                would be D x L, where D is the depth
-            `profile_length`: length of the predicted profiles; it must be
-                consistent with the convolutional layers specified
-            `num_tasks`: number of tasks that are to be predicted; there will be
-                two profiles and two read counts predicted for each task
-            `num_dil_conv_layers`: number of dilating convolutional layers
-            `dil_conv_filter_sizes`: sizes of the initial dilating convolutional
-                filters; must have `num_conv_layers` entries
-            `dil_conv_stride`: stride used for each dilating convolution
-            `dil_conv_dilations`: dilations used for each layer of the dilating
-                convolutional layers
-            `dil_conv_depths`: depths of the dilating convolutional filters;
-                must have `num_conv_layers` entries
-            `prof_conv_kernel_size`: size of the large convolutional filter used
-                for profile prediction
-            `prof_conv_stride`: stride used for the large profile convolution
+    Creates a close variant of the BPNet architecture, as described here:
+        https://www.biorxiv.org/content/10.1101/737981v1.full
 
-        Creates a close variant of the BPNet architecture, as described here:
-            https://www.biorxiv.org/content/10.1101/737981v1.full
-        """
-        super().__init__()
-        self.creation_args = locals()
-        del self.creation_args["self"]
-        del self.creation_args["__class__"]
-        self.creation_args = sanitize_sacred_arguments(self.creation_args)
-        
-        assert len(dil_conv_filter_sizes) == num_dil_conv_layers
-        assert len(dil_conv_dilations) == num_dil_conv_layers
-        assert len(dil_conv_depths) == num_dil_conv_layers
+    Inputs:
+        `inputs_seqs`: a B x I x D tensor, where B is the batch size, I is the
+            input sequence length, and D is the number of input channels
+        `cont_profs`: a B x T x O x 2 tensor, where T is the number of tasks,
+            and O is the output sequence length
+    Outputs:
+        `prof_pred`: a B x T x O x 2 tensor, containing the predicted profiles
+            for each task and strand, as LOGITS
+        `count_pred`: a B x T x 2 tensor, containing the predicted LOG counts
+            for each task and strand
+    """
+    assert len(dil_conv_filter_sizes) == num_dil_conv_layers
+    assert len(dil_conv_dilations) == num_dil_conv_layers
 
-        # Save some parameters
-        self.input_depth = input_depth
-        self.input_length = input_length
-        self.profile_length = profile_length
-        self.num_tasks = num_tasks
-        self.num_dil_conv_layers = num_dil_conv_layers
-        
-        # 7 convolutional layers with increasing dilations
-        self.dil_convs = torch.nn.ModuleList()
-        last_out_size = input_length
-        for i in range(num_dil_conv_layers):
-            kernel_size = dil_conv_filter_sizes[i]
-            in_channels = input_depth if i == 0 else dil_conv_depths[i - 1]
-            out_channels = dil_conv_depths[i]
-            dilation = dil_conv_dilations[i]
-            padding = int(dilation * (kernel_size - 1) / 2)  # "same" padding,
-                                                             # for easy adding
-            self.dil_convs.append(
-                torch.nn.Conv1d(
-                    in_channels=in_channels, out_channels=out_channels,
-                    kernel_size=kernel_size, dilation=dilation, padding=padding
-                )
-            )
-          
-            last_out_size = last_out_size - (dilation * (kernel_size - 1))
-        # The size of the final dilated convolution output, if there _weren't_
-        # any padding (i.e. "valid" padding)
-        self.last_dil_conv_size = last_out_size
+    # 0. Specify input sequence and control profiles
+    input_seq = kl.Input(
+        shape=(input_length, input_depth), name="input_seq"
+    )
+    cont_profs = kl.Input(
+        shape=(num_tasks, profile_length, 2), name="cont_profs"
+    )
 
-        # ReLU activation for the convolutional layers
-        self.relu = torch.nn.ReLU()
-
-        # Profile prediction:
-        # Convolutional layer with large kernel
-        # TODO: Transposed convolution?
-        # self.prof_first_conv = torch.nn.ConvTranspose1d(
-        #     in_channels=64, out_channels=num_tasks, kernel_size=75
-        # )
-        self.prof_large_conv = torch.nn.Conv1d(
-            in_channels=dil_conv_depths[-1], out_channels=(num_tasks * 2),
-            kernel_size=prof_conv_kernel_size
+    # 1. Perform dilated convolutions on the input, each layer's input is
+    # the sum of all previous layers' outputs
+    dil_conv_sum = None
+    last_dil_conv_size = input_length
+    for i in range(num_dil_conv_layers):
+        kernel_size = dil_conv_filter_sizes[i]
+        dilation = dil_conv_dilations[i]
+        dil_conv = kl.Conv1D(
+            filters=dil_conv_depths, kernel_size=kernel_size, padding="same",
+            activation="relu", dilation_rate=dilation, 
+            name=("dil_conv_%d" % (i + 1))
         )
+        if i == 0:
+            dil_conv_out = dil_conv(input_seq)
+            dil_conv_sum = dil_conv_out
+        elif i != num_dil_conv_layers - 1:
+            dil_conv_out = dil_conv(dil_conv_sum)
+            dil_conv_sum = kl.Add()([dil_conv_out, dil_conv_sum])
+        else:  # Last layer
+            dil_conv_out = dil_conv(dil_conv_sum)
 
-        self.prof_pred_size = self.last_dil_conv_size - \
-            (prof_conv_kernel_size - 1)
+        # The size of the dilated convolution output, if there _weren't_ any
+        # padding (i.e. "valid" padding)
+        last_dil_conv_size = \
+            last_dil_conv_size - (dilation * (kernel_size - 1))
 
-        assert self.prof_pred_size == profile_length, \
-            "Prediction length is specified to be %d, but with the given " +\
-            "input length of %d and the given convolutions, the computed " +\
-            "prediction length is %d" % \
-            (profile_length, input_length, self.prof_pred_size)
+    # 2. Truncate the final dilated convolutional layer output so that it
+    # only has entries that did not see padding; this is equivalent to
+    # truncating it to the size it would be if no padding were ever added
+    crop_size = int((dil_conv_out.shape[1].value - last_dil_conv_size) / 2)
+    dil_conv_crop = kl.Cropping1D(
+        cropping=(crop_size, crop_size), name="dil_conv_crop"
+    )
+    dil_conv_crop_out = dil_conv_crop(dil_conv_out)
 
-        # Length-1 convolution over the convolutional output and controls to
-        # get the final profile
-        self.prof_one_conv = torch.nn.Conv1d(
-            in_channels=(num_tasks * 4), out_channels=(num_tasks * 2),
-            kernel_size=1, groups=num_tasks  # One set of filters over each task
-        )
-        
-        # Counts prediction:
-        # Global average pooling
-        self.count_pool = torch.nn.AvgPool1d(
-            kernel_size=self.last_dil_conv_size
-        )
+    # Branch A: profile prediction
+    # A1. Perform convolution with a large kernel
+    prof_large_conv = kl.Conv1D(
+        filters=(num_tasks * 2), kernel_size=prof_conv_kernel_size,
+        padding="valid", name="prof_large_conv"
+    )
+    prof_large_conv_out = prof_large_conv(dil_conv_crop_out)  # B x O x 2T
+    prof_pred_size = prof_large_conv_out.shape[1]
 
-        # Dense layer to consolidate pooled result to small number of features
-        self.count_dense = torch.nn.Linear(
-            in_features=dil_conv_depths[-1], out_features=(num_tasks * 2)
-        )
+    assert prof_pred_size == profile_length, \
+        "Prediction length is specified to be %d, but with the given " +\
+        "input length of %d and the given convolutions, the computed " +\
+        "prediction length is %d" % \
+        (profile_length, input_length, prof_pred_size)
+    
+    # A2. Concatenate with the control profiles
+    # Reshaping is necessary to ensure the tasks are paired together
+    prof_large_conv_out = kl.Reshape((-1, num_tasks, 2))(
+        prof_large_conv_out
+    )  # Shape: B x O x T x 2
+    cont_profs_perm = kl.Lambda(
+        lambda x: tf.transpose(x, perm=(0, 2, 1, 3))
+    )(cont_profs)  # Shape: B x O x T x 2
+    prof_with_cont = kl.Concatenate(axis=3)(
+        [prof_large_conv_out, cont_profs_perm]
+    )  # Shape: B x O x T x 4
 
-        # Dense layer over pooling features and controls to get the final
-        # counts, implemented as grouped convolution with kernel size 1
-        self.count_one_conv = torch.nn.Conv1d(
-            in_channels=(num_tasks * 4), out_channels=(num_tasks * 2),
-            kernel_size=1
-        )
+    # A3. Perform length-1 convolutions over the concatenated profiles with
+    # controls; there are T convolutions, each one is done over one pair of
+    # prof_large_conv_out, and a pair of controls; this is implemented as
+    # a 2D convolution with a 1 x 1 filter
+    prof_one_conv = kl.Conv2D(
+        filters=2, kernel_size=(1, 1), padding="valid",
+        name="prof_one_conv"
+    )
+    prof_one_conv_out = prof_one_conv(prof_with_cont)  # Shape: B x O x T x 2
+    prof_pred = kl.Lambda(lambda x: tf.transpose(x, perm=(0, 2, 1, 3)))(
+        prof_one_conv_out
+    )  # Shape: B x T x O x 2
 
-        # For converting profile logits to profile log probabilities
-        self.sigmoid = torch.nn.Sigmoid()
+    # Branch B: read count prediction
+    # B1. Global average pooling across the output of dilated convolutions
+    count_pool = kl.GlobalAveragePooling1D(name="count_pool")
+    count_pool_out = count_pool(dil_conv_crop_out)  # Shape: B x P
 
-        # MSE Loss for counts
-        self.mse_loss = torch.nn.MSELoss(reduction="none")
+    # B2. Reduce pooling output to fewer features, a pair for each task
+    count_dense = kl.Dense(units=(num_tasks * 2), name="count_dense")
+    count_dense_out = count_dense(count_pool_out)  # Shape: B x 2T
 
-    def forward(self, input_seqs, cont_profs):
-        """
-        Computes a forward pass on a batch of sequences.
-        Arguments:
-            `inputs_seqs`: a B x D x I tensor, where B is the batch size, D is
-                the number of channels in the input, and I is the input sequence
-                length
-            `cont_profs`: a B x T x 2 x O tensor, where T is the number of
-                tasks, and O is the output sequence length
-        Returns the predicted (normalized) profiles for each task (both plus
-        and minus strands) (a B x T x 2 x O tensor), and the predicted log
-        counts for each task (both plus and minus strands) (a B x T x 2) tensor.
-        """
-        batch_size = input_seqs.size(0)
-        input_length = input_seqs.size(2)
-        assert input_length == self.input_length
-        num_tasks = cont_profs.size(1)
-        assert num_tasks == self.num_tasks
-        profile_length = cont_profs.size(3)
-        assert profile_length == self.profile_length
-        
-        # 1. Perform dilated convolutions on the input, each layer's input is
-        # the sum of all previous layers' outputs
-        dil_conv_out_list = None
-        dil_conv_sum = 0
-        for i, dil_conv in enumerate(self.dil_convs):
-            if i == 0:
-                dil_conv_out = self.relu(dil_conv(input_seqs))
-            else:
-                dil_conv_out = self.relu(dil_conv(dil_conv_sum))
+    # B3. Concatenate with the control counts
+    # Reshaping is necessary to ensure the tasks are paired
+    cont_counts = kl.Lambda(lambda x: tf.reduce_sum(x, axis=2))(cont_profs)
+    # Shape: B x T x 2
+    count_dense_out = kl.Reshape((num_tasks, 2))(count_dense_out)  # Shape:
+    #   B x T x 2
+    count_with_cont = kl.Concatenate(axis=2)([count_dense_out, cont_counts])
+    # Shape: B x T x 4
 
-            if i != self.num_dil_conv_layers - 1:
-                dil_conv_sum = dil_conv_out + dil_conv_sum
+    # B4. Dense layer over the concatenation with control counts; each set
+    # of counts gets a different dense network (implemented as convolution
+    # with kernel size 1)
+    count_one_conv = kl.Conv1D(
+        filters=2, kernel_size=1, name="count_one_conv"
+    )
+    count_one_conv_out = count_one_conv(count_with_cont)  # Shape: B x T x 2
+    count_pred = count_one_conv_out
 
-        # 2. Truncate the final dilated convolutional layer output so that it
-        # only has entries that did not see padding; this is equivalent to
-        # truncating it to the size it would be if no padding were ever added
-        start = int((dil_conv_out.size(2) - self.last_dil_conv_size) / 2)
-        end = start + self.last_dil_conv_size
-        dil_conv_out_cut = dil_conv_out[:, :, start : end]
+    # Create model
+    model = km.Model(
+        inputs=[input_seq, cont_profs], outputs=[prof_pred, count_pred]
+    )
+    return model
 
-        # Branch A: profile prediction
-        # A1. Perform convolution with a large kernel
-        prof_large_conv_out = self.prof_large_conv(dil_conv_out_cut)
 
-        # A2. Concatenate with the control profiles
-        # Reshaping is necessary to ensure the tasks are paired adjacently
-        prof_large_conv_out = prof_large_conv_out.view(
-            batch_size, num_tasks, 2, -1
-        )
-        prof_with_cont = torch.cat([prof_large_conv_out, cont_profs], dim=2)
-        prof_with_cont = prof_with_cont.view(batch_size, num_tasks * 4, -1)
+def correctness_loss(
+    true_profs, logit_pred_profs, log_pred_counts, count_loss_weight
+):
+    """
+    Returns the loss of the correctness off the predicted profiles and
+    predicted read counts. This prediction correctness loss is split into a
+    profile loss and a count loss. The profile loss is the -log probability
+    of seeing the true profile read counts, given the multinomial
+    distribution defined by the predicted profile count probabilities. The
+    count loss is a simple mean squared error on the log counts.
+    Arguments:
+        `true_profs`: a B x T x O x 2 tensor containing true UNnormalized
+            profile values, where B is the batch size, T is the number of
+            tasks, and O is the profile length; the sum of a profile gives
+            the raw read count for that task
+        `logit_pred_profs`: a B x T x O x 2 tensor containing the predicted
+            profile _logits_
+        `log_pred_counts`: a B x T x 2 tensor containing the predicted log
+            read counts
+        `count_loss_weight`: amount to weight the portion of the loss for
+            the counts
+    Returns a scalar loss tensor.
+    """
+    assert true_profs.shape == logit_pred_profs.shape
+    batch_size = true_profs.shape[0].value
+    num_tasks = true_profs.shape[1].value
 
-        # A3. Perform length-1 convolutions over the concatenated profiles with
-        # controls; there are T convolutions, each one is done over one pair of
-        # prof_first_conv_out, and a pair of controls
-        prof_one_conv_out = self.prof_one_conv(prof_with_cont)
-        prof_pred = prof_one_conv_out.view(batch_size, num_tasks, 2, -1)
-        
-        # Branch B: read count prediction
-        # B1. Global average pooling across the output of dilated convolutions
-        count_pool_out = self.count_pool(dil_conv_out_cut)
-        count_pool_out = torch.squeeze(count_pool_out, dim=2)
+    # Reshape the inputs to be flat along the tasks dimension
+    true_profs = tf.reshape(
+        tf.transpose(true_profs, perm=(0, 1, 3, 2)),
+        (batch_size, num_tasks * 2, -1)
+        )  # Shape: B x 2T x O
+    logit_pred_profs = tf.reshape(
+        tf.transpose(logit_pred_profs, perm=(0, 1, 3, 2)),
+        (batch_size, num_tasks * 2, -1)
+    )  # Shape: B x 2T x O
+    log_pred_counts = log_pred_counts.view(batch_size, num_tasks * 2)  # Shape:
+    #   B x 2T
 
-        # B2. Reduce pooling output to fewer features, a pair for each task
-        count_dense_out = self.count_dense(count_pool_out)
+    # Add the profiles together to get the raw counts
+    true_counts = torch.sum(true_profs, dim=2)
 
-        # B3. Concatenate with the control counts
-        # Reshaping is necessary to ensure the tasks are paired adjacently
-        cont_counts = torch.sum(cont_profs, dim=3)
-        count_dense_out = count_dense_out.view(batch_size, num_tasks, 2)
-        count_with_cont = torch.cat([count_dense_out, cont_counts], dim=2)
-        count_with_cont = count_with_cont.view(batch_size, num_tasks * 4, -1)
+    # 1. Profile loss
+    # Compute the log probabilities based on multinomial distributions,
+    # each one is based on predicted probabilities, one for each track
 
-        # B4. Dense layer over the concatenation with control counts; each set
-        # of counts gets a different dense network (implemented as convolution
-        # with kernel size 1)
-        count_one_conv_out = self.count_one_conv(count_with_cont)
-        count_pred = count_one_conv_out.view(batch_size, num_tasks, 2, -1)
-        count_pred = torch.squeeze(count_pred, dim=3)
+    # Convert logits to log probabilities and normalize
+    sig_pred_profs = self.sigmoid(logit_pred_profs)
+    sig_sums = torch.sum(sig_pred_profs, dim=-1).unsqueeze(-1).repeat(
+        1, 1, sig_pred_profs.size(-1)
+    )
+    norm_sig_pred_profs = torch.div(sig_pred_profs, sig_sums)
+    log_pred_profs = torch.log(norm_sig_pred_profs)  # Log probs
 
-        return prof_pred, count_pred
+    # Compute probability of seeing true profile under distribution of log
+    # predicted probs
+    log_probs = multinomial_log_probs(
+        log_pred_profs, true_counts, true_profs
+    )
+    batch_prof_loss = torch.mean(-log_probs, dim=1)  # Average across tasks
+    prof_loss = torch.mean(batch_prof_loss)  # Average across batch
 
-    def correctness_loss(
-        self, true_profs, logit_pred_profs, log_pred_counts, count_loss_weight
-    ):
-        """
-        Returns the loss of the correctness off the predicted profiles and
-        predicted read counts. This prediction correctness loss is split into a
-        profile loss and a count loss. The profile loss is the -log probability
-        of seeing the true profile read counts, given the multinomial
-        distribution defined by the predicted profile count probabilities. The
-        count loss is a simple mean squared error on the log counts.
-        Arguments:
-            `true_profs`: a B x T x 2 x O tensor containing true UNnormalized
-                profile values, where B is the batch size, T is the number of
-                tasks, and O is the profile length; the sum of a profile gives
-                the raw read count for that task
-            `logit_pred_profs`: a B x T x 2 x O tensor containing the predicted
-                profile _logits_
-            `log_pred_counts`: a B x T x 2 tensor containing the predicted log
-                read counts
-            `count_loss_weight`: amount to weight the portion of the loss for
-                the counts
-        Returns a scalar loss tensor.
-        """
-        assert true_profs.size() == logit_pred_profs.size()
-        batch_size = true_profs.size(0)
-        num_tasks = true_profs.size(1)
+    # 2. Counts loss
+    # Mean squared error on the log counts (with 1 added for stability)
+    log_true_counts = torch.log(true_counts + 1)
 
-        # Reshape the inputs to be flat along the tasks dimension
-        true_profs = true_profs.view(batch_size, num_tasks * 2, -1)
-        logit_pred_profs = logit_pred_profs.view(batch_size, num_tasks * 2, -1)
-        log_pred_counts = log_pred_counts.view(batch_size, num_tasks * 2)
+    mse = self.mse_loss(log_pred_counts, log_true_counts)
+    batch_count_loss = torch.mean(mse, dim=1)  # Average acorss tasks
+    count_loss = torch.mean(batch_count_loss)  # average across batch
 
-        # Add the profiles together to get the raw counts
-        true_counts = torch.sum(true_profs, dim=2)
-
-        # 1. Profile loss
-        # Compute the log probabilities based on multinomial distributions,
-        # each one is based on predicted probabilities, one for each track
-
-        # Convert logits to log probabilities and normalize
-        sig_pred_profs = self.sigmoid(logit_pred_profs)
-        sig_sums = torch.sum(sig_pred_profs, dim=-1).unsqueeze(-1).repeat(
-            1, 1, sig_pred_profs.size(-1)
-        )
-        norm_sig_pred_profs = torch.div(sig_pred_profs, sig_sums)
-        log_pred_profs = torch.log(norm_sig_pred_profs)  # Log probs
-
-        # Compute probability of seeing true profile under distribution of log
-        # predicted probs
-        log_probs = multinomial_log_probs(
-            log_pred_profs, true_counts, true_profs
-        )
-        batch_prof_loss = torch.mean(-log_probs, dim=1)  # Average across tasks
-        prof_loss = torch.mean(batch_prof_loss)  # Average across batch
-
-        # 2. Counts loss
-        # Mean squared error on the log counts (with 1 added for stability)
-        log_true_counts = torch.log(true_counts + 1)
-
-        mse = self.mse_loss(log_pred_counts, log_true_counts)
-        batch_count_loss = torch.mean(mse, dim=1)  # Average acorss tasks
-        count_loss = torch.mean(batch_count_loss)  # average across batch
-
-        return prof_loss + (count_loss_weight * count_loss)
+    return prof_loss + (count_loss_weight * count_loss)
