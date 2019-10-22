@@ -5,6 +5,7 @@ import sacred
 from datetime import datetime
 import pyBigWig
 import feature.util as util
+import keras
 
 dataset_ex = sacred.Experiment("dataset")
 
@@ -136,7 +137,7 @@ class CoordsToVals:
         return self._get_ndarray(coords)
 
 
-class CoordsBatcher(torch.utils.data.sampler.Sampler):
+class CoordsBatcher:
     """
     Creates a batch producer that batches positive coordinates and samples
     negative coordinates. Each batch will have some positives and negatives
@@ -184,6 +185,7 @@ class CoordsBatcher(torch.utils.data.sampler.Sampler):
 
         if shuffle_before_epoch:
             self.rng = np.random.RandomState(seed)
+            self.pos_coords = self.rng.permutation(self.pos_coords)
 
     def __getitem__(self, index):
         """
@@ -216,16 +218,16 @@ class CoordsBatcher(torch.utils.data.sampler.Sampler):
     def __len__(self):
         return int(np.ceil(self.num_pos / float(self.pos_per_batch)))
    
-    def on_epoch_start(self):
+    def on_epoch_end(self):
         if self.shuffle_before_epoch:
             self.pos_coords = self.rng.permutation(self.pos_coords)
 
 
-class CoordDataset(torch.utils.data.IterableDataset):
+class CoordDataset(keras.utils.data_utils.Sequence):
     """
     Generates single samples of a one-hot encoded sequence and value.
     Arguments:
-        `coords_batcher (CoordsDownsampler): Maps indices to batches of
+        `coords_batcher (CoordsBatcher): Maps indices to batches of
             coordinates (split into positive and negative binding)
         `coords_to_seq (CoordsToSeq)`: Maps coordinates to 1-hot encoded
             sequences
@@ -247,7 +249,7 @@ class CoordDataset(torch.utils.data.IterableDataset):
         self.revcomp = revcomp
         self.return_coords = return_coords
 
-    def get_batch(self, index):
+    def __getitem__(self, index):
         """
         Returns a batch, which consists of an N x L x 4 NumPy array of 1-hot
         encoded sequence, an N x T x 2 x L NumPy array of profiles, and a 1D
@@ -285,41 +287,22 @@ class CoordDataset(torch.utils.data.IterableDataset):
         else:
             return seqs, profiles, status
 
-    def __iter__(self):
-        """
-        Returns an iterator over the batches. If the dataset iterator is called
-        from multiple workers, each worker will be give a shard of the full
-        range.
-        """
-        worker_info = torch.utils.data.get_worker_info()
-        num_batches = len(self.coords_batcher)
-        if worker_info is None:
-            # In single-processing mode
-            start, end = 0, num_batches
-        else:
-            worker_id = worker_info.id
-            num_workers = worker_info.num_workers
-            shard_size = int(np.ceil(num_batches / num_workers))
-            start = shard_size * worker_id
-            end = min(start + shard_size, num_batches)
-        return (self.get_batch(i) for i in range(start, end))
-
     def __len__(self):
         return len(self.coords_batcher)
     
-    def on_epoch_start(self):
+    def on_epoch_end(self):
         """
         This should be called manually before the beginning of every epoch (i.e.
         before the iteration begins).
         """
-        self.coords_batcher.on_epoch_start()
+        self.coords_batcher.on_epoch_end()
 
 
 @dataset_ex.capture
 def data_loader_from_beds_and_bigwigs(
     peaks_bed_paths, profile_bigwig_paths, batch_size, reference_fasta,
-    chrom_sizes, input_length, profile_length, negative_ratio, num_workers,
-    revcomp, jitter_size, dataset_seed, shuffle=True, return_coords=False
+    chrom_sizes, input_length, profile_length, negative_ratio, revcomp,
+    jitter_size, dataset_seed, shuffle=True, return_coords=False
 ):
     """
     From a list of paths to gzipped BED files containing coordinates of positive
@@ -360,13 +343,7 @@ def data_loader_from_beds_and_bigwigs(
         return_coords=return_coords
     )
 
-    # Dataset loader: dataset is iterable and already returns batches
-    loader = torch.utils.data.DataLoader(
-        dataset, batch_size=None, num_workers=num_workers,
-        collate_fn=lambda x: x
-    )
-
-    return loader
+    return dataset
 
 
 data = None
@@ -377,7 +354,7 @@ def main():
     import os
     import tqdm
 
-    base_path = "/users/amtseng/att_priors/data/processed/ENCODE/profile/labels"
+    base_path = "/users/amtseng/tfmodisco/data/interim/ENCODE/"
 
     peaks_bed_files = [
         os.path.join(base_path, ending) for ending in [
@@ -410,22 +387,27 @@ def main():
         ]
     ]
 
-    loader = data_loader_from_beds_and_bigwigs(
+    dataset = data_loader_from_beds_and_bigwigs(
         peaks_bed_files, profile_bigwig_files,
         reference_fasta="/users/amtseng/genomes/hg38.fasta"
     )
-    loader.dataset.on_epoch_start()
     start_time = datetime.now()
-    for batch in tqdm.tqdm(loader, total=len(loader.dataset)):
-        data = batch
-        break
+
+    enq = keras.utils.OrderedEnqueuer(dataset, use_multiprocessing=True)
+    workers, queue_size = 10, 20
+    enq.start(workers, queue_size)
+    para_batch_gen = enq.get()
+
+    for i in tqdm.trange(len(enq.sequence)):
+        data = next(para_batch_gen)
+
     end_time = datetime.now()
     print("Time: %ds" % (end_time - start_time).seconds)
 
     k = 2
     rc_k = int(len(data[0]) / 2) + k
 
-    seqs, profiles, counts, statuses = data
+    seqs, profiles, statuses = data
     
     seq, prof, status = seqs[k], profiles[k], statuses[k]
     rc_seq, rc_prof, rc_status = seqs[rc_k], profiles[rc_k], statuses[rc_k]

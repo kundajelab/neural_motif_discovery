@@ -82,6 +82,9 @@ def config(dataset):
     
     # Imported from make_profile_dataset
     negative_ratio = dataset["negative_ratio"]
+    
+    # Imported from make_profile_dataset
+    num_workers = 10
 
 
 @train_ex.capture
@@ -123,22 +126,18 @@ def create_model(
 
 
 @train_ex.capture
-def train_epoch(train_loader, model, num_tasks):
+def train_epoch(train_queue, train_batch_num, model, num_tasks):
     """
-    Runs the data from the training loader once through the model, and performs
-    backpropagation. Returns a list of losses for the batches. Note that the
-    data loader is expected to return profiles where the first half of the tasks
-    are prediction profiles, and the second half are control profiles.
+    Runs the data from the training data queue once through the model, and
+    performs backpropagation. Returns a list of losses for the batches. Note
+    that the queue is expected to return profiles where the first half of the
+    tasks are prediction profiles, and the second half are control profiles.
     """
-    train_loader.dataset.on_epoch_start()  # Set-up the epoch
-    num_batches = len(train_loader.dataset)
-    t_iter = tqdm.tqdm(
-        train_loader, total=num_batches, desc="\tTraining loss: ---"
-    )
+    t_iter = tqdm.trange(train_batch_num, desc="\tTraining loss: ---")
 
     batch_losses = []
-    for input_seqs, profiles, statuses in t_iter:
-        
+    for _ in t_iter:
+        input_seqs, profiles, statuses = next(train_queue)
         # Make length come before strands in profiles
         profiles = np.transpose(profiles, [0, 1, 3, 2])
 
@@ -158,22 +157,18 @@ def train_epoch(train_loader, model, num_tasks):
 
 
 @train_ex.capture
-def eval_epoch(val_loader, model, num_tasks):
+def eval_epoch(val_queue, val_batch_num, model, num_tasks):
     """
-    Runs the data from the validation loader once through the model. Returns a
-    list of losses for the batches. Note that the data loader is expected to
-    return profiles where the first half of the tasks are prediction profiles,
-    and the second half are control profiles.
+    Runs the data from the validation data queue once through the model. Returns
+    a list of losses for the batches. Note that the queue is expected to return
+    profiles where the first half of the tasks are prediction profiles, and the
+    second half are control profiles.
     """ 
-    val_loader.dataset.on_epoch_start()  # Set-up the epoch
-    num_batches = len(val_loader.dataset)
-    t_iter = tqdm.tqdm(
-        val_loader, total=num_batches, desc="\tValidation loss: ---"
-    )
+    t_iter = tqdm.trange(val_batch_num, desc="\tValidation loss: ---")
 
     batch_losses = []
-    for input_seqs, profiles, statuses in t_iter:
-        
+    for _ in t_iter:
+        input_seqs, profiles, statuses = next(val_queue)
         # Make length come before strands in profiles
         profiles = np.transpose(profiles, [0, 1, 3, 2])
 
@@ -194,16 +189,16 @@ def eval_epoch(val_loader, model, num_tasks):
 
 @train_ex.capture
 def train(
-    train_loader, val_loader, num_epochs, early_stopping, early_stop_hist_len,
-    early_stop_min_delta, train_seed, _run
+    train_enq, val_enq, num_workers, num_epochs, early_stopping,
+    early_stop_hist_len, early_stop_min_delta, train_seed, _run
 ):
     """
     Trains the network for the given training and validation data.
     Arguments:
-        `train_loader` (DataLoader): a data loader for the training data, each
-            batch giving the 1-hot encoded sequence and profiles
-        `val_loader` (DataLoader): a data loader for the validation data, each
-            batch giving the 1-hot encoded sequence and profiles
+        `train_enq` (OrderedEnqueuer): an enqueuer for the training data,
+            each batch giving the 1-hot encoded sequence and profiles
+        `val_enq` (OrderedEnqueuer): an enqueuer for the validation data,
+            each batch giving the 1-hot encoded sequence and profiles
     """
     run_num = _run._id
     output_dir = os.path.join(MODEL_DIR, str(run_num))
@@ -216,8 +211,15 @@ def train(
     if early_stopping:
         val_epoch_loss_hist = []
 
+    # Start the enqueuers
+    train_enq.start(num_workers, num_workers * 2)
+    val_enq.start(num_workers, num_workers * 2)
+    train_queue, val_queue = train_enq.get(), val_enq.get()
+    train_batch_num = len(train_enq.sequence)
+    val_batch_num = len(val_enq.sequence)
+
     for epoch in range(num_epochs):
-        t_batch_losses = train_epoch(train_loader, model)
+        t_batch_losses = train_epoch(train_queue, train_batch_num, model)
         train_epoch_loss = np.nanmean(t_batch_losses)
         print(
             "Train epoch %d: average loss = %6.10f" % (
@@ -227,7 +229,7 @@ def train(
         _run.log_scalar("train_epoch_loss", train_epoch_loss)
         _run.log_scalar("train_batch_losses", t_batch_losses)
 
-        v_batch_losses = eval_epoch(val_loader, model)
+        v_batch_losses = eval_epoch(val_queue, val_batch_num, model)
         val_epoch_loss = np.nanmean(v_batch_losses)
         print(
             "Valid epoch %d: average loss = %6.10f" % (
@@ -239,7 +241,7 @@ def train(
 
         # Save trained model for the epoch
         savepath = os.path.join(
-            output_dir, "model_ckpt_epoch_%d.pt" % (epoch + 1)
+            output_dir, "model_ckpt_epoch_%d.h5" % (epoch + 1)
         )
         model.save(savepath)
 
@@ -263,13 +265,16 @@ def train(
 
 @train_ex.command
 def run_training(train_peak_beds, val_peak_beds, prof_bigwigs):
-    train_loader = make_profile_dataset.data_loader_from_beds_and_bigwigs(
+    t_dataset = make_profile_dataset.data_loader_from_beds_and_bigwigs(
         train_peak_beds, prof_bigwigs
     )
-    val_loader = make_profile_dataset.data_loader_from_beds_and_bigwigs(
+    v_dataset = make_profile_dataset.data_loader_from_beds_and_bigwigs(
         val_peak_beds, prof_bigwigs
     )
-    train(train_loader, val_loader)
+    t_enq = keras.utils.OrderedEnqueuer(t_dataset, use_multiprocessing=True)
+    v_enq = keras.utils.OrderedEnqueuer(v_dataset, use_multiprocessing=True)
+
+    train(t_enq, v_enq)
 
 
 @train_ex.automain
