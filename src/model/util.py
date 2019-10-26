@@ -1,6 +1,7 @@
 import logging
 import sys
 import sacred
+import numpy as np
 
 def make_logger(name):
     logger = logging.getLogger(name)
@@ -12,6 +13,16 @@ def make_logger(name):
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     return logger
+
+
+def nan_mean(arr):
+    """
+    Returns the mean of the array, ignoring any NaNs. If the array is all NaN,
+    then NaN is returned.
+    """
+    if np.all(np.isnan(arr)):
+        return np.nan
+    return np.nanmean(arr)
 
 
 def convolution_size(

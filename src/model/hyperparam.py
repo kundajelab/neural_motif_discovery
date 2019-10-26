@@ -1,4 +1,4 @@
-import model.train_binary_model as train
+import model.train_profile_model as train
 import numpy as np
 import random
 import os
@@ -46,7 +46,9 @@ def deep_update(parent, update):
 
 
 @hyperparam_ex.capture
-def launch_training(hparams, base_config, train_file, val_file):
+def launch_training(
+    hparams, base_config, train_peak_beds, val_peak_beds, prof_bigwigs
+):
     deep_update(hparams, base_config)
     config_updates = hparams
 
@@ -56,17 +58,18 @@ def launch_training(hparams, base_config, train_file, val_file):
     del config_updates["train"]
     deep_update(config_updates, train_dict)
 
+    # Add in the file paths; these will be filled into the command by Sacred
+    config_updates["train_peak_beds"] = train_peak_beds
+    config_updates["val_peak_beds"] = val_peak_beds
+    config_updates["prof_bigwigs"] = prof_bigwigs 
+
     train.train_ex.run("run_training", config_updates=config_updates)
 
 
 @click.command()
 @click.option(
-    "--train-file", "-t", nargs=1, required=True,
-    help="Path to gzipped training BED"
-)
-@click.option(
-    "--val-file", "-v", nargs=1, required=True,
-    help="Path to gzipped validation BED"
+    "--file-specs-json-path", "-f", nargs=1, required=True,
+    help="Path to file containing paths for training data"
 )
 @click.option(
     "--num-runs", "-n", nargs=1, default=50, help="Number of runs for tuning"
@@ -78,15 +81,13 @@ def launch_training(hparams, base_config, train_file, val_file):
 @click.argument(
     "config_cli_tokens", nargs=-1
 )
-def main(train_file, val_file, num_runs, config_json_path, config_cli_tokens):
+def main(file_specs_json_path, num_runs, config_json_path, config_cli_tokens):
     def sample_hyperparams():
         np.random.seed()  # Re-seed to random number
         hparams = {
             "train": {
-                "fc_drop_rate": uniformly_sample_dist(-1, -3, log_scale=True),
-                "learning_rate": uniformly_sample_dist(-1, -6, log_scale=True),
-                "att_prior_loss_weight": uniformly_sample_dist(-1, 1, log_scale=True),
-                "att_prior_pos_weight": uniformly_sample_dist(-2, 2, log_scale=True)
+                "learning_rate": uniformly_sample_dist(-3, -5, log_scale=True),
+                "counts_loss_weight": uniformly_sample_dist(1, 4, log_scale=True)
             },
             "dataset": {
                 "batch_size": uniformly_sample_list([32, 64, 128, 256])
@@ -127,13 +128,17 @@ def main(train_file, val_file, num_runs, config_json_path, config_cli_tokens):
             d = d[key_piece]
         d[key_pieces[-1]] = val
 
-    # Add in these arguments for the run_training command in train
-    base_config["train"]["train_bed_path"] = train_file
-    base_config["train"]["val_bed_path"] = val_file
+    # Extract the file paths specified
+    with open(file_specs_json_path, "r") as f:
+        file_specs_json = json.load(f)
+    train_peak_beds = file_specs_json["train_peak_beds"]
+    val_peak_beds = file_specs_json["val_peak_beds"]
+    prof_bigwigs = file_specs_json["prof_bigwigs"]
 
     for i in range(num_runs):
         launch_training(
-            sample_hyperparams(), base_config, train_file, val_file
+            sample_hyperparams(), base_config, train_peak_beds, val_peak_beds,
+            prof_bigwigs
         )
     
         

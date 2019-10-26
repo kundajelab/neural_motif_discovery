@@ -71,6 +71,9 @@ def config(dataset):
     # Minimum improvement in loss at least once over history to not stop early
     early_stop_min_delta = 0.001
 
+    # If we see this many NaN batch losses in a row in training, quit the epoch
+    batch_nan_limit = 100
+
     # Training seed
     train_seed = None
 
@@ -149,7 +152,9 @@ def create_model(
 
 
 @train_ex.capture
-def train_epoch(train_queue, train_batch_num, model, num_tasks):
+def train_epoch(
+    train_queue, train_batch_num, model, num_tasks, batch_nan_limit
+):
     """
     Runs the data from the training data queue once through the model, and
     performs backpropagation. Returns a list of losses for the batches. Note
@@ -172,6 +177,12 @@ def train_epoch(train_queue, train_batch_num, model, num_tasks):
             [input_seqs, cont_profs], [tf_profs, tf_counts]
         )
         batch_losses.append(losses[0])
+
+        if len(batch_losses) >= batch_nan_limit and np.all(
+            np.isnan(batch_losses[-batch_nan_limit:])
+        ):
+            # Return a list of only NaNs, so the epoch loss is NaN
+            return batch_losses[-batch_nan_limit:]
         t_iter.set_description(
             "\tTraining loss: %6.10f" % losses[0]
         )
@@ -243,7 +254,7 @@ def train(
 
     for epoch in range(num_epochs):
         t_batch_losses = train_epoch(train_queue, train_batch_num, model)
-        train_epoch_loss = np.nanmean(t_batch_losses)
+        train_epoch_loss = util.nan_mean(t_batch_losses)
         print(
             "Train epoch %d: average loss = %6.10f" % (
                 epoch + 1, train_epoch_loss
@@ -252,8 +263,12 @@ def train(
         _run.log_scalar("train_epoch_loss", train_epoch_loss)
         _run.log_scalar("train_batch_losses", t_batch_losses)
 
+        # If training returned enough NaNs in a row, then stop
+        if np.isnan(train_epoch_loss):
+            break
+
         v_batch_losses = eval_epoch(val_queue, val_batch_num, model)
-        val_epoch_loss = np.nanmean(v_batch_losses)
+        val_epoch_loss = util.nan_mean(v_batch_losses)
         print(
             "Valid epoch %d: average loss = %6.10f" % (
                 epoch + 1, val_epoch_loss
@@ -268,8 +283,8 @@ def train(
         )
         model.save(savepath)
 
-        # If losses are both NaN, then stop
-        if np.isnan(train_epoch_loss) and np.isnan(val_epoch_loss):
+        # If validation returned enough NaNs in a row, then stop
+        if np.isnan(val_epoch_loss):
             break
 
         # Check for early stopping
