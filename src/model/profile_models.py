@@ -197,7 +197,10 @@ def profile_tf_binding_predictor(
     return model
 
 
-def profile_loss(true_profs, logit_pred_profs, num_tasks, profile_length):
+def profile_loss(
+    true_profs, logit_pred_profs, num_tasks, profile_length,
+    profile_norm_type="softmax"
+):
     """
     Returns the loss of the correctness off the predicted profiles. The profile
     loss is the -log probability of seeing the true profile read counts, given
@@ -212,8 +215,11 @@ def profile_loss(true_profs, logit_pred_profs, num_tasks, profile_length):
             profile _logits_
         `num_tasks`: the number of tasks T
         `profile_length`: the length of the profile outputs O
+        `profile_norm_type`: how to normalize the logits to become
+            probabilities; can be "softmax" or "sigmoid"
     Returns a scalar loss tensor.
     """
+
     # Reshape the inputs to be flat along the tasks dimension
     true_profs = tf.reshape(
         tf.transpose(true_profs, perm=(0, 1, 3, 2)),
@@ -225,10 +231,17 @@ def profile_loss(true_profs, logit_pred_profs, num_tasks, profile_length):
     )  # Shape: B x 2T x O
 
     # Convert logits to log probabilities and normalize
-    sig_pred_profs = tf.sigmoid(logit_pred_profs)
-    sig_sums = tf.reduce_sum(sig_pred_profs, axis=1, keep_dims=True)
-    norm_sig_pred_profs = tf.divide(sig_pred_profs, sig_sums)
-    log_pred_profs = tf.log(norm_sig_pred_profs)  # Log probs; shape: B x 2T
+    if profile_norm_type == "softmax":
+        log_pred_profs = tf.nn.softmax(logit_pred_profs)
+    else:
+        # We need to reimplement the sigmoid ourselves, otherwise the NaNs
+        # get lost (a known TF issue)
+        exp_pred_profs = tf.exp(logit_pred_profs)
+        sig_pred_profs = 1 / (1 + exp_pred_profs)
+        sig_sums = tf.reduce_sum(sig_pred_profs, axis=1, keep_dims=True)
+        norm_sig_pred_profs = tf.divide(sig_pred_profs, sig_sums)
+        log_pred_profs = tf.log(norm_sig_pred_profs)
+    # Log probs; shape: B x 2T x O
 
     # Compute the true read counts from the true profile
     true_counts = tf.reduce_sum(true_profs, axis=2)
@@ -238,6 +251,7 @@ def profile_loss(true_profs, logit_pred_profs, num_tasks, profile_length):
     log_probs = multinomial_log_probs(
         log_pred_profs, true_counts, true_profs
     )
+
     batch_prof_loss = tf.reduce_mean(-log_probs, axis=1)  # Average across tasks
     prof_loss = tf.reduce_mean(batch_prof_loss)  # Average across batch
 

@@ -50,6 +50,9 @@ def config(dataset):
     # Number of prediction tasks (2 outputs for each task: plus/minus strand)
     num_tasks = 4
 
+    # Type of normalization for profile probabilities
+    profile_norm_type = "softmax"
+
     # Amount to weight the counts loss within the correctness loss
     counts_loss_weight = 100
 
@@ -57,7 +60,7 @@ def config(dataset):
     num_epochs = 10
 
     # Learning rate
-    learning_rate = 0.004
+    learning_rate = 0.001
 
     # Whether or not to use early stopping
     early_stopping = True
@@ -86,12 +89,34 @@ def config(dataset):
     # Imported from make_profile_dataset
     num_workers = 10
 
+def get_profile_loss_function(num_tasks, profile_length, profile_norm_type):
+    """
+    Returns a _named_ profile loss function. When saving the model, Keras will
+    use "profile_loss" as the name for this loss function.
+    """
+    def profile_loss(true_vals, pred_vals):
+        return profile_models.profile_loss(
+            true_vals, pred_vals, num_tasks, profile_length, profile_norm_type
+        )
+    return profile_loss
+
+
+def get_count_loss_function(num_tasks):
+    """
+    Returns a _named_ count loss function. When saving the model, Keras will
+    use "count_loss" as the name for this loss function.
+    """
+    def count_loss(true_vals, pred_vals):
+        return profile_models.count_loss(true_vals, pred_vals, num_tasks)
+    return count_loss
+
 
 @train_ex.capture
 def create_model(
     input_length, input_depth, profile_length, num_tasks, num_dil_conv_layers,
     dil_conv_filter_sizes, dil_conv_stride, dil_conv_dilations, dil_conv_depths,
-    prof_conv_kernel_size, prof_conv_stride, counts_loss_weight, learning_rate
+    prof_conv_kernel_size, prof_conv_stride, counts_loss_weight, learning_rate,
+    profile_norm_type
 ):
     """
     Creates and compiles profile model using the configuration above.
@@ -110,16 +135,14 @@ def create_model(
         prof_conv_stride=prof_conv_stride
     )
 
-    profile_loss = lambda x, y: profile_models.profile_loss(
-        x, y, num_tasks, profile_length
-    )
-    count_loss = lambda x, y: profile_models.count_loss(
-        x, y, num_tasks
-    )
-    
     prof_model.compile(
         keras.optimizers.Adam(lr=learning_rate),
-        loss=[profile_loss, count_loss],
+        loss=[
+            get_profile_loss_function(
+                num_tasks, profile_length, profile_norm_type
+            ),
+            get_count_loss_function(num_tasks),
+        ],
         loss_weights=[1, counts_loss_weight]
     )
     return prof_model
