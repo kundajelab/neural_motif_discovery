@@ -300,6 +300,9 @@ def train(
                 if best_delta < early_stop_min_delta:
                     break  # Not improving enough
 
+    # Stop the parallel queues
+    train_enq.stop()
+    val_enq.stop()
 
 @train_ex.command
 def run_training(train_peak_beds, val_peak_beds, prof_bigwigs):
