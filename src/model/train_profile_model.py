@@ -52,9 +52,6 @@ def config(dataset):
     # Number of prediction tasks (2 outputs for each task: plus/minus strand)
     num_tasks = 4
 
-    # Type of normalization for profile probabilities
-    profile_norm_type = "softmax"
-
     # Amount to weight the counts loss within the correctness loss
     counts_loss_weight = 100
 
@@ -62,7 +59,7 @@ def config(dataset):
     num_epochs = 10
 
     # Learning rate
-    learning_rate = 0.001
+    learning_rate = 0.004
 
     # Whether or not to use early stopping
     early_stopping = True
@@ -94,14 +91,15 @@ def config(dataset):
     # Imported from make_profile_dataset
     num_workers = 10
 
-def get_profile_loss_function(num_tasks, profile_length, profile_norm_type):
+
+def get_profile_loss_function(num_tasks, profile_length):
     """
     Returns a _named_ profile loss function. When saving the model, Keras will
     use "profile_loss" as the name for this loss function.
     """
     def profile_loss(true_vals, pred_vals):
         return profile_models.profile_loss(
-            true_vals, pred_vals, num_tasks, profile_length, profile_norm_type
+            true_vals, pred_vals, num_tasks, profile_length
         )
     return profile_loss
 
@@ -120,8 +118,7 @@ def get_count_loss_function(num_tasks):
 def create_model(
     input_length, input_depth, profile_length, num_tasks, num_dil_conv_layers,
     dil_conv_filter_sizes, dil_conv_stride, dil_conv_dilations, dil_conv_depths,
-    prof_conv_kernel_size, prof_conv_stride, counts_loss_weight, learning_rate,
-    profile_norm_type
+    prof_conv_kernel_size, prof_conv_stride, counts_loss_weight, learning_rate
 ):
     """
     Creates and compiles profile model using the configuration above.
@@ -143,9 +140,7 @@ def create_model(
     prof_model.compile(
         keras.optimizers.Adam(lr=learning_rate),
         loss=[
-            get_profile_loss_function(
-                num_tasks, profile_length, profile_norm_type
-            ),
+            get_profile_loss_function(num_tasks, profile_length),
             get_count_loss_function(num_tasks),
         ],
         loss_weights=[1, counts_loss_weight]
@@ -193,7 +188,7 @@ def train_epoch(
 
 
 @train_ex.capture
-def eval_epoch(val_queue, val_batch_num, model, num_tasks, profile_norm_type):
+def eval_epoch(val_queue, val_batch_num, model, num_tasks):
     """
     Runs the data from the validation data queue once through the model. Returns
     a list of losses for the batches. Note that the queue is expected to return
@@ -240,9 +235,10 @@ def eval_epoch(val_queue, val_batch_num, model, num_tasks, profile_norm_type):
     true_total_counts = np.concatenate(true_total_counts)
 
     # Convert the model output logits and logs to desired values
-    pred_prof_probs = profile_models.profile_logits_to_probs(
-        logit_pred_profs, profile_norm_type
+    pred_prof_log_probs = profile_models.profile_logits_to_log_probs(
+        logit_pred_profs
     )
+    pred_prof_probs = np.exp(pred_prof_log_probs)
     pred_counts = np.exp(log_pred_counts) - 1
     
     # Compute performance on validation set
