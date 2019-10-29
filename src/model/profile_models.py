@@ -1,5 +1,6 @@
 import math
 import numpy as np
+import scipy.special
 import keras.layers as kl
 import keras.models as km
 import tensorflow as tf
@@ -25,7 +26,6 @@ def multinomial_log_probs(category_log_probs, trials, query_counts):
     """
     # Multinomial probability = n! / (x1!...xk!) * p1^x1 * ... pk^xk
     # Log prob = log(n!) - (log(x1!) ... + log(xk!)) + x1log(p1) ... + xklog(pk)
-
     log_n_fact = tf.math.lgamma(trials + 1)
     log_counts_fact = tf.math.lgamma(query_counts + 1)
     log_counts_fact_sum = tf.reduce_sum(log_counts_fact, axis=-1)
@@ -197,8 +197,41 @@ def profile_tf_binding_predictor(
     return model
 
 
+def profile_logits_to_probs(logit_pred_profs, profile_norm_type="softmax"):
+    """
+    Converts the model's predicted profile logits into normalized probabilities.
+    Arguments:
+        `logit_pred_profs`: a B x T x O x 2 tensor/array containing the
+            predicted profile logits
+        `profile_norm_type`: how to normalize the logits to become
+            probabilities; can be "softmax" or "sigmoid"; for "softmax", simply
+            passes the logits through a softmax on the profile dimension; for
+            "sigmoid", passes everything through a sigmoid and then normalizes
+    Returns a B x T x O x 2 tensor/array containing the predicted profiles as
+    probabilities. If the input is a tensor, the output will be a tensor. If the
+    input is a NumPy array, the output will be a NumPy array.
+    """
+    if type(logit_pred_profs) is np.ndarray:
+        if profile_norm_type == "softmax":
+            return scipy.special.softmax(logit_pred_profs, axis=2)
+        else:
+            sig_pred_profs = scipy.special.expit(logit_pred_profs)
+            sig_sums = np.sum(sig_red_profs, axis=2, keepdims=True)
+            return np.divide(sig_pred_profs, sig_sums)
+    else:
+        if profile_norm_type == "softmax":
+            return tf.nn.softmax(logit_pred_profs, axis=2)
+        else:
+            # We need to reimplement the sigmoid ourselves, otherwise the NaNs
+            # get lost (a known TF issue)
+            exp_pred_profs = tf.exp(logit_pred_profs)
+            sig_pred_profs = 1 / (1 + exp_pred_profs)
+            sig_sums = tf.reduce_sum(sig_pred_profs, axis=2, keep_dims=True)
+            return tf.divide(sig_pred_profs, sig_sums)
+
+
 def profile_loss(
-    true_profs, logit_pred_profs, num_tasks, profile_length,
+    true_prof_counts, logit_pred_profs, num_tasks, profile_length,
     profile_norm_type="softmax"
 ):
     """
@@ -219,41 +252,33 @@ def profile_loss(
             probabilities; can be "softmax" or "sigmoid"
     Returns a scalar loss tensor.
     """
+    # Convert logits to log probabilities
+    log_pred_profs = tf.log(
+        profile_logits_to_probs(logit_pred_profs, profile_norm_type)
+    ) # Shape: B x T x O x 2
 
     # Reshape the inputs to be flat along the tasks dimension
-    true_profs = tf.reshape(
-        tf.transpose(true_profs, perm=(0, 1, 3, 2)),
+    true_prof_counts = tf.reshape(
+        tf.transpose(true_prof_counts, perm=(0, 1, 3, 2)),
         (-1, num_tasks * 2, profile_length)
         )  # Shape: B x 2T x O
-    logit_pred_profs = tf.reshape(
-        tf.transpose(logit_pred_profs, perm=(0, 1, 3, 2)),
+    log_pred_profs = tf.reshape(
+        tf.transpose(log_pred_profs, perm=(0, 1, 3, 2)),
         (-1, num_tasks * 2, profile_length)
     )  # Shape: B x 2T x O
 
-    # Convert logits to log probabilities and normalize
-    if profile_norm_type == "softmax":
-        log_pred_profs = tf.nn.softmax(logit_pred_profs)
-    else:
-        # We need to reimplement the sigmoid ourselves, otherwise the NaNs
-        # get lost (a known TF issue)
-        exp_pred_profs = tf.exp(logit_pred_profs)
-        sig_pred_profs = 1 / (1 + exp_pred_profs)
-        sig_sums = tf.reduce_sum(sig_pred_profs, axis=1, keep_dims=True)
-        norm_sig_pred_profs = tf.divide(sig_pred_profs, sig_sums)
-        log_pred_profs = tf.log(norm_sig_pred_profs)
-    # Log probs; shape: B x 2T x O
-
     # Compute the true read counts from the true profile
-    true_counts = tf.reduce_sum(true_profs, axis=2)
+    true_counts = tf.reduce_sum(true_prof_counts, axis=2)
 
     # Compute probability of seeing true profile under distribution of log
     # predicted probs
     log_probs = multinomial_log_probs(
-        log_pred_profs, true_counts, true_profs
+        log_pred_profs, true_counts, true_prof_counts
     )
 
-    batch_prof_loss = tf.reduce_mean(-log_probs, axis=1)  # Average across tasks
-    prof_loss = tf.reduce_mean(batch_prof_loss)  # Average across batch
+    # Average the loss across tasks/strands, then across the batch
+    batch_prof_loss = tf.reduce_mean(-log_probs, axis=1)
+    prof_loss = tf.reduce_mean(batch_prof_loss)
 
     return prof_loss
 

@@ -5,6 +5,7 @@ import tqdm
 import os
 import model.util as util
 import model.profile_models as profile_models
+import model.profile_performance as profile_performance
 import feature.make_profile_dataset as make_profile_dataset
 import keras.optimizers
 import tensorflow as tf
@@ -15,7 +16,8 @@ MODEL_DIR = os.environ.get(
 )
 
 train_ex = sacred.Experiment("train", ingredients=[
-    make_profile_dataset.dataset_ex
+    make_profile_dataset.dataset_ex,
+    profile_performance.performance_ex
 ])
 train_ex.observers.append(
     sacred.observers.FileStorageObserver.create(MODEL_DIR)
@@ -191,16 +193,20 @@ def train_epoch(
 
 
 @train_ex.capture
-def eval_epoch(val_queue, val_batch_num, model, num_tasks):
+def eval_epoch(val_queue, val_batch_num, model, num_tasks, profile_norm_type):
     """
     Runs the data from the validation data queue once through the model. Returns
     a list of losses for the batches. Note that the queue is expected to return
     profiles where the first half of the tasks are prediction profiles, and the
-    second half are control profiles.
+    second half are control profiles. Returns a list of losses by batch, as well
+    as a dictionary of performance metrics for the entire set.
     """ 
     t_iter = tqdm.trange(val_batch_num, desc="\tValidation loss: ---")
 
     batch_losses = []
+    logit_pred_profs, log_pred_counts = [], []
+    true_prof_counts, true_total_counts = [], []
+    batch_losses, logit_pred_profs, log_pred_counts = [], [], []
     for _ in t_iter:
         input_seqs, profiles, statuses = next(val_queue)
         # Make length come before strands in profiles
@@ -218,7 +224,33 @@ def eval_epoch(val_queue, val_batch_num, model, num_tasks):
             "\tValidation loss: %6.10f" % losses[0]
         )
 
-    return batch_losses
+        # Take only the positive examples and run predictions
+        pos_mask = statuses != 0
+        out_prof_pred, out_count_pred = model.predict_on_batch(
+            [input_seqs[pos_mask], cont_profs[pos_mask]]
+        )
+        logit_pred_profs.append(out_prof_pred)
+        log_pred_counts.append(out_count_pred)
+        true_prof_counts.append(tf_profs[pos_mask])
+        true_total_counts.append(tf_counts[pos_mask])
+
+    logit_pred_profs = np.concatenate(logit_pred_profs)
+    log_pred_counts = np.concatenate(log_pred_counts)
+    true_prof_counts = np.concatenate(true_prof_counts)
+    true_total_counts = np.concatenate(true_total_counts)
+
+    # Convert the model output logits and logs to desired values
+    pred_prof_probs = profile_models.profile_logits_to_probs(
+        logit_pred_profs, profile_norm_type
+    )
+    pred_counts = np.exp(log_pred_counts) - 1
+    
+    # Compute performance on validation set
+    metrics = profile_performance.compute_performance(
+        true_prof_counts, pred_prof_probs, true_total_counts, pred_counts
+    )
+
+    return batch_losses, metrics
 
 
 @train_ex.capture
@@ -254,28 +286,31 @@ def train(
 
     for epoch in range(num_epochs):
         t_batch_losses = train_epoch(train_queue, train_batch_num, model)
-        train_epoch_loss = util.nan_mean(t_batch_losses)
+        t_epoch_loss = util.nan_mean(t_batch_losses)
         print(
-            "Train epoch %d: average loss = %6.10f" % (
-                epoch + 1, train_epoch_loss
+            "Train epoch %d: %6.10f average loss" % (
+                epoch + 1, t_epoch_loss
             )
         )
-        _run.log_scalar("train_epoch_loss", train_epoch_loss)
+        _run.log_scalar("train_epoch_loss", t_epoch_loss)
         _run.log_scalar("train_batch_losses", t_batch_losses)
 
         # If training returned enough NaNs in a row, then stop
-        if np.isnan(train_epoch_loss):
+        if np.isnan(t_epoch_loss):
             break
 
-        v_batch_losses = eval_epoch(val_queue, val_batch_num, model)
-        val_epoch_loss = util.nan_mean(v_batch_losses)
+        v_batch_losses, v_metrics = eval_epoch(val_queue, val_batch_num, model)
+        v_epoch_loss = util.nan_mean(v_batch_losses)
         print(
-            "Valid epoch %d: average loss = %6.10f" % (
-                epoch + 1, val_epoch_loss
+            "Valid epoch %d: %6.10f average loss" % (
+                epoch + 1, v_epoch_loss
             )
         )
-        _run.log_scalar("val_epoch_loss", val_epoch_loss)
+        _run.log_scalar("val_epoch_loss", v_epoch_loss)
         _run.log_scalar("val_batch_losses", v_batch_losses)
+
+        # Log the performance metrics on the validation set
+        profile_performance.log_performance(v_metrics, _run)
 
         # Save trained model for the epoch
         savepath = os.path.join(
@@ -284,18 +319,18 @@ def train(
         model.save(savepath)
 
         # If validation returned enough NaNs in a row, then stop
-        if np.isnan(val_epoch_loss):
+        if np.isnan(v_epoch_loss):
             break
 
         # Check for early stopping
         if early_stopping:
             if len(val_epoch_loss_hist) < early_stop_hist_len - 1:
                 # Not enough history yet; tack on the loss
-                val_epoch_loss_hist = [val_epoch_loss] + val_epoch_loss_hist
+                val_epoch_loss_hist = [v_epoch_loss] + val_epoch_loss_hist
             else:
                 # Tack on the new validation loss, kicking off the old one
                 val_epoch_loss_hist = \
-                    [val_epoch_loss] + val_epoch_loss_hist[:-1]
+                    [v_epoch_loss] + val_epoch_loss_hist[:-1]
                 best_delta = np.max(np.diff(val_epoch_loss_hist))
                 if best_delta < early_stop_min_delta:
                     break  # Not improving enough
@@ -303,6 +338,7 @@ def train(
     # Stop the parallel queues
     train_enq.stop()
     val_enq.stop()
+
 
 @train_ex.command
 def run_training(train_peak_beds, val_peak_beds, prof_bigwigs):
