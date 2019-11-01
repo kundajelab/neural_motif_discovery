@@ -19,7 +19,7 @@ def config():
 
 
 def profile_multinomial_nll(
-    true_prof_counts, pred_prof_probs, true_total_counts
+    true_prof_counts, pred_prof_log_probs, true_total_counts
 ):
     """
     Computes the multinomial negative log likelihood of the true profiles, given
@@ -29,8 +29,8 @@ def profile_multinomial_nll(
             examples, T is the number of tasks, and O is the output profile
             length; contains the true profiles for each for each task and
             strand, as RAW counts
-        `pred_prof_probs`: a N x T x O x 2 array, containing the predicted
-            profiles for each task and strand, as PROBABILITIES
+        `pred_prof_log_probs`: a N x T x O x 2 array, containing the predicted
+            profiles for each task and strand, as LOG probabilities 
         `true_total_counts`: a N x T x 2 array, containing the true counts for
             each task and strand
     Returns an array of T items, containing the negative log likelihoods,
@@ -42,7 +42,7 @@ def profile_multinomial_nll(
     log_n_fact = scipy.special.gammaln(true_total_counts + 1)
     log_counts_fact = scipy.special.gammaln(true_prof_counts + 1)
     log_counts_fact_sum = np.sum(log_counts_fact, axis=2)
-    log_prob_pows = np.log(pred_prof_probs) * true_prof_counts  # Elementwise
+    log_prob_pows = pred_prof_log_probs * true_prof_counts  # Elementwise
     log_prob_pows_sum = np.sum(log_prob_pows, axis=2)
 
     nll = log_counts_fact_sum - log_n_fact - log_prob_pows_sum
@@ -139,7 +139,7 @@ def count_correlation(true_total_counts, pred_counts):
 
 @performance_ex.capture
 def compute_performance(
-    true_prof_counts, pred_prof_probs, true_total_counts, pred_counts
+    true_prof_counts, pred_prof_log_probs, true_total_counts, pred_counts
 ):
     """
     Arguments:
@@ -147,8 +147,8 @@ def compute_performance(
             examples, T is the number of tasks, and O is the output profile
             length; contains the true profiles for each for each task and
             strand, as RAW counts
-        `pred_prof_probs`: a N x T x O x 2 array, containing the predicted
-            profiles for each task and strand, as PROBABILITIES
+        `pred_prof_log_probs`: a N x T x O x 2 array, containing the predicted
+            profiles for each task and strand, as LOG probabilities 
         `true_total_counts`: a N x T x 2 array, containing the true counts for
             each task and strand
         `pred_counts`: a N x T x 2 array, containing the predicted counts for
@@ -162,8 +162,9 @@ def compute_performance(
         A T-array of the Spearman correlation of the counts
     """
     nll = profile_multinomial_nll(
-        true_prof_counts, pred_prof_probs, true_total_counts
+        true_prof_counts, pred_prof_log_probs, true_total_counts
     )
+    pred_prof_probs = np.exp(pred_prof_log_probs)
     auprc, class_counts = profile_binary_auprc(
         true_prof_counts, pred_prof_probs, true_total_counts
     )

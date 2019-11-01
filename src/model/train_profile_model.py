@@ -238,12 +238,11 @@ def eval_epoch(val_queue, val_batch_num, model, num_tasks):
     pred_prof_log_probs = profile_models.profile_logits_to_log_probs(
         logit_pred_profs
     )
-    pred_prof_probs = np.exp(pred_prof_log_probs)
     pred_counts = np.exp(log_pred_counts) - 1
     
     # Compute performance on validation set
     metrics = profile_performance.compute_performance(
-        true_prof_counts, pred_prof_probs, true_total_counts, pred_counts
+        true_prof_counts, pred_prof_log_probs, true_total_counts, pred_counts
     )
 
     return batch_losses, metrics

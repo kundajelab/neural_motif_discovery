@@ -4,7 +4,6 @@ import random
 import os
 import click
 import sacred
-import torch
 import json
 
 hyperparam_ex = sacred.Experiment("hyperparam")
