@@ -1,9 +1,9 @@
 set -beEo pipefail
 
 tfname=$1
-tfindir=/users/amtseng/att_priors/data/raw/ENCODE/$tfname/tf_chipseq
-contindir=/users/amtseng/att_priors/data/raw/ENCODE/$tfname/control_chipseq
-outdir=/users/amtseng/att_priors/data/interim/ENCODE/profile/$tfname
+tfindir=/users/amtseng/tfmodisco/data/raw/ENCODE/$tfname/tf_chipseq
+contindir=/users/amtseng/tfmodisco/data/raw/ENCODE/$tfname/control_chipseq
+outdir=/users/amtseng/tfmodisco/data/interim/ENCODE/$tfname
 
 chromsizes=/users/amtseng/genomes/hg38.with_ebv.chrom.sizes
 
@@ -76,7 +76,11 @@ do
 	# 2) Generate bins of the positive binding centered around optimal peak summits
 	# 2.1) Fetch the peak summits, expand to length 1000 but not past the chromosome edges
 	printf "\tGenerating bins of positive-binding peaks\n"
-	zcat $tfpeaksopt | awk -F "\t" '{print $1 "\t" $2 + $10 "\t" $2 + $10}' | bedtools slop -g $chromsizes -b 500 | awk '$3 - $2 == 1000' | bedtools sort | gzip > $outdir/$tfname\_$expidcline\_peakints.bed.gz
+	zcat $tfpeaksopt | awk -F "\t" '{print $1 "\t" $2 + $10 "\t" $2 + $10 "\t" $2 "\t" $3 "\t" $2 + $10}' | bedtools slop -g $chromsizes -b 500 | awk '$3 - $2 == 1000' | bedtools sort | gzip > $outdir/$tfname\_$expidcline\_all_peakints.bed.gz
+
+	# 2.2) Split into training and validation
+	zcat $outdir/$tfname\_$expidcline\_all_peakints.bed.gz | awk '$1 ~ /^(chr|chr1|chr8|chr21)$/' | gzip > $outdir/$tfname\_$expidcline\_val_peakints.bed.gz
+	zcat $outdir/$tfname\_$expidcline\_all_peakints.bed.gz | awk '$1 !~ /^(chr|chr1|chr8|chr21)$/' | gzip > $outdir/$tfname\_$expidcline\_train_peakints.bed.gz
 
 	# Clean up this iteration
 	rm -rf $tempdir/*
