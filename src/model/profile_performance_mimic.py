@@ -1,10 +1,7 @@
 import numpy as np
 import scipy.special
-import sacred
 from sklearn.metrics import average_precision_score
 import scipy.stats
-
-performance_ex = sacred.Experiment("performance")
 
 def bin_counts_max(x, binsize=2):
     """
@@ -185,16 +182,16 @@ def log_performance(metrics, _run, print_log=True):
                 auprcs[binsize] = [d["auprc"]]
                 rand_auprcs[binsize] = [d["random_auprc"]]
         
-    _run.log_scalar("val_count_pearson", pearsons)
-    _run.log_scalar("val_count_spearman", spearmans)
+    _run.log_scalar("mimic_val_count_pearson", pearsons)
+    _run.log_scalar("mimic_val_count_spearman", spearmans)
     for binsize in sorted(auprcs.keys()):
-        _run.log_scalar("val_prof_auprc_binsize_%d" % binsize, auprcs[binsize])
+        _run.log_scalar("mimic_val_prof_auprc_binsize_%d" % binsize, auprcs[binsize])
         _run.log_scalar(
-            "val_prof_rand_auprc_binsize_%d" % binsize, rand_auprcs[binsize]
+            "mimic_val_prof_rand_auprc_binsize_%d" % binsize, rand_auprcs[binsize]
         )
    
     if print_log:
-        print("Validation set performance:")
+        print("Mimicked validation set performance:")
         print("\tCount Pearson: " + ", ".join(
             [("%6.6f" % x) for x in pearsons]
         ))

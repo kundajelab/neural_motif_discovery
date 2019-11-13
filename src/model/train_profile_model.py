@@ -12,7 +12,7 @@ import tensorflow as tf
 
 MODEL_DIR = os.environ.get(
     "MODEL_DIR",
-    "/users/amtseng/tfmodisco/models/trained_profile_models/"
+    "/users/amtseng/tfmodisco/models/trained_models/misc/"
 )
 
 train_ex = sacred.Experiment("train", ingredients=[

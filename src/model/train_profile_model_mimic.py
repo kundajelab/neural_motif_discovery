@@ -4,15 +4,16 @@ import math
 import tqdm
 import os
 import model.util as util
-import model.profile_models_mimic as profile_models
-import model.profile_performance_mimic as profile_performance
+import model.profile_models_mimic as profile_models_mimic
+import model.profile_performance_mimic as profile_performance_mimic
+import model.profile_performance as profile_performance
 import feature.make_profile_dataset as make_profile_dataset
 import tensorflow as tf
 import keras.utils
 
 MODEL_DIR = os.environ.get(
     "MODEL_DIR",
-    "/users/amtseng/tfmodisco/models/trained_models/"
+    "/users/amtseng/tfmodisco/models/trained_models/misc/"
 )
 
 train_ex = sacred.Experiment("train", ingredients=[
@@ -73,7 +74,19 @@ def config(dataset):
     input_length = dataset["input_length"]
     
     # Imported from make_profile_dataset
+    profile_length = dataset["profile_length"]
+
+    # Imported from make_profile_dataset
     num_workers = dataset["num_workers"]
+
+    # Imported from make_profile_dataset
+    num_workers = dataset["num_workers"]
+
+    # Imported from make_profile_dataset
+    batch_size = dataset["batch_size"]
+
+    # Imported from make_profile_dataset
+    revcomp = dataset["revcomp"]
 
 
 def get_profile_loss_function(num_tasks, profile_length):
@@ -82,7 +95,7 @@ def get_profile_loss_function(num_tasks, profile_length):
     use "profile_loss" as the name for this loss function.
     """
     def profile_loss(true_vals, pred_vals):
-        return profile_models.MultinomialMultichannelNLL(2)
+        return profile_models_mimic.MultinomialMultichannelNLL(2)
     return profile_loss
 
 
@@ -95,7 +108,7 @@ def create_model(
     """
     Creates and compiles profile model using the configuration above.
     """
-    prof_model = profile_models.BPNet(
+    prof_model = profile_models_mimic.BPNet(
         seq_len=input_length,
         num_tasks=num_tasks,
         conv1_kernel_size=first_conv_filter_size,
@@ -119,23 +132,49 @@ def smooth_control_profile(prof, cont_prof_smooth_window):
 
 
 @train_ex.capture
-def train_epoch(
-    train_queue, train_batch_num, model, num_tasks, batch_nan_limit
+def run_epoch(
+    data_gen, num_batches, mode, model, num_tasks, batch_size, revcomp,
+    profile_length, batch_nan_limit, return_data=False
 ):
     """
-    Runs the data from the training data queue once through the model, and
-    performs backpropagation. Returns a list of losses for the batches. Note
-    that the queue is expected to return T profiles where the first T - 1 are
-    for the prediction tasks, and the last one is the control.
+    Runs the data from the data loader once through the model, to train,
+    validate, or predict.
+    Arguments:
+        `data_gen`: an `OrderedEnqueuer`'s generator instance that gives batches
+            of data; each batch must yield the input sequences, profiles, and
+            statuses; profiles must be such that the first `num_tasks` are
+            prediction (target) profiles, and the last one is control profiles
+        `num_batches`: number of batches in the data generator
+        `mode`: one of "train", "eval"; if "train", run the epoch and perform
+            backpropagation; if "eval", only do evaluation
+        `model`: the current compiled Keras model being trained/evaluated
+        `return_data`: if specified, returns the following as NumPy arrays:
+            true profile counts, predicted profile log probabilities,
+            true total counts, predicted log counts
+    Returns a list of losses for the batches. If `return_data` is True, then
+    more things will be returned after these.
     """
-    t_iter = tqdm.trange(train_batch_num, desc="\tTraining loss: ---")
+    assert mode in ("train", "eval")
 
+    t_iter = tqdm.trange(num_batches, desc="\tLoss: ---")
     batch_losses = []
+    if return_data:
+        # Allocate empty NumPy arrays to hold the results
+        num_samples_exp = num_batches * batch_size
+        num_samples_exp *= 2 if revcomp else 1
+        # Real number of samples can be smaller because of partial last batch
+        profile_shape = (num_samples_exp, num_tasks, profile_length, 2)
+        count_shape = (num_samples_exp, num_tasks, 2)
+        all_log_pred_profs = np.empty(profile_shape)
+        all_log_pred_counts = np.empty(count_shape)
+        all_true_profs = np.empty(profile_shape)
+        all_true_counts = np.empty(count_shape)
+        num_samples_seen = 0  # Real number of samples seen
+
     for _ in t_iter:
-        input_seqs, profiles, statuses = next(train_queue)
+        input_seqs, profiles, statuses = next(data_gen)
         # Make length come before strands in profiles
-        profiles = np.transpose(profiles, [0, 1, 3, 2])
-        assert profiles.shape[1] == num_tasks + 1
+        profiles = np.swapaxes(profiles, 2, 3)
 
         tf_profs = [profiles[:, i, :, :] for i in range(num_tasks)]  # B x I x 2
         cont_prof = np.sum(profiles[:, -1, :, :], axis=2)  # B x I
@@ -145,117 +184,78 @@ def train_epoch(
         cont_prof_tracks = np.stack([cont_prof, cont_prof_smooth], axis=2)
         # B x I x 2
 
-        losses = model.train_on_batch(
-            [input_seqs] + ([cont_prof_tracks] * 4) + [cont_total_count],
-            tf_profs + tf_counts
-        )
+        if mode == "train":
+            losses = model.train_on_batch(
+                [input_seqs] + ([cont_prof_tracks] * 4) + [cont_total_count],
+                tf_profs + tf_counts
+            )
+        else:
+            losses = model.test_on_batch(
+                [input_seqs] + ([cont_prof_tracks] * 4) + [cont_total_count],
+                tf_profs + tf_counts
+            )
         batch_losses.append(losses[0])
-
+        
         if len(batch_losses) >= batch_nan_limit and np.all(
             np.isnan(batch_losses[-batch_nan_limit:])
         ):
             # Return a list of only NaNs, so the epoch loss is NaN
             return batch_losses[-batch_nan_limit:]
-        t_iter.set_description(
-            "\tTraining loss: %6.10f" % losses[0]
-        )
 
-    return batch_losses
+        t_iter.set_description("\tLoss: %6.4f" % losses[0])
 
-
-@train_ex.capture
-def eval_epoch(
-    val_queue, val_batch_num, model, num_tasks, compute_metrics=False
-):
-    """
-    Runs the data from the validation data queue once through the model. Returns
-    a list of losses for the batches. Note that the queue is expected to return
-    profiles where the first half of the tasks are prediction profiles, and the
-    second half are control profiles. Returns a list of losses by batch, as well
-    as a dictionary of performance metrics for the entire set (only if
-    `compute_metrics` is True).
-    """ 
-    t_iter = tqdm.trange(val_batch_num, desc="\tValidation loss: ---")
-
-    if compute_metrics:    
-        logit_pred_profs, log_pred_counts = [], []
-        true_prof_counts, true_total_counts = [], []
-    batch_losses = []
-    for _ in t_iter:
-        input_seqs, profiles, statuses = next(val_queue)
-        # Make length come before strands in profiles
-        profiles = np.transpose(profiles, [0, 1, 3, 2])
-        assert profiles.shape[1] == num_tasks + 1
-
-        tf_profs = [profiles[:, i, :, :] for i in range(num_tasks)]  # B x I x 2
-        cont_prof = np.sum(profiles[:, -1, :, :], axis=2)  # B x I
-        tf_counts = [np.sum(prof, axis=1) for prof in tf_profs]  # B x 2
-        cont_total_count = np.log(np.sum(cont_prof, axis=1) + 1)
-        cont_prof_smooth = smooth_control_profile(cont_prof)
-        cont_prof_tracks = np.stack([cont_prof, cont_prof_smooth], axis=2)
-        # B x I x 2
-
-        losses = model.test_on_batch(
-            [input_seqs] + ([cont_prof_tracks] * 4) + [cont_total_count],
-            tf_profs + tf_counts
-        )
-        batch_losses.append(losses[0])
-        t_iter.set_description(
-            "\tValidation loss: %6.10f" % losses[0]
-        )
-
-        # Take only the positive examples and run predictions, if specified
-        if compute_metrics:
-            pos_mask = statuses != 0
+        if return_data:
             model_out = model.predict_on_batch(
-                [input_seqs[pos_mask]] + ([cont_prof_tracks[pos_mask]] * 4) +\
-                [cont_total_count[pos_mask]]
-            )
-            logit_pred_profs.append(np.stack(model_out[:num_tasks], axis=1))
-            log_pred_counts.append(np.stack(model_out[num_tasks:], axis=1))
-            true_prof_counts.append(
-                np.stack([prof[pos_mask] for prof in tf_profs], axis=1)
-            )
-            true_total_counts.append(
-                np.stack([count[pos_mask] for count in tf_counts], axis=1)
+                [input_seqs] + ([cont_prof_tracks] * 4) + [cont_total_count]
             )
 
-    if compute_metrics:
-        print("\tComputing validation metrics...")
-        logit_pred_profs = np.concatenate(logit_pred_profs)  # N x T x O x 2
-        log_pred_counts = np.concatenate(log_pred_counts)  # N x T x 2
-        true_prof_counts = np.concatenate(true_prof_counts)  # N x T x O x 2
-        true_total_counts = np.concatenate(true_total_counts)  # N x T x 2
+            num_in_batch = tf_profs[0].shape[0]
+         
+            logit_pred_profs = np.stack(model_out[:num_tasks], axis=1)
+            log_pred_counts = np.stack(model_out[num_tasks:], axis=1)
+            # Turn logit profile predictions into log probabilities
+            log_pred_profs = profile_models_mimic.profile_logits_to_log_probs(
+                logit_pred_profs
+            )
+            true_profs = np.stack([prof for prof in tf_profs], axis=1)
+            true_counts = np.stack([count for count in tf_counts], axis=1)
 
-        # Convert the model output logits and logs to desired values
-        pred_prof_log_probs = profile_models.profile_logits_to_log_probs(
-            logit_pred_profs
-        )
-        log_true_counts = np.log(true_total_counts + 1)
-        
-        # Compute performance on validation set
-        metrics = profile_performance.compute_performance(
-            true_prof_counts, pred_prof_log_probs, log_true_counts,
-            log_pred_counts, num_tasks
-        )
+            # Fill in the batch data/outputs into the preallocated arrays
+            start, end = num_samples_seen, num_samples_seen + num_in_batch
+            all_log_pred_profs[start:end] = log_pred_profs
+            all_log_pred_counts[start:end] = log_pred_counts
+            all_true_profs[start:end] = true_profs
+            all_true_counts[start:end] = true_counts
 
-        return batch_losses, metrics
+            num_samples_seen += num_in_batch
+
+    if return_data:
+        # Truncate the saved data to the proper size, based on how many
+        # samples actually seen
+        all_log_pred_profs = all_log_pred_profs[:num_samples_seen]
+        all_log_pred_counts = all_log_pred_counts[:num_samples_seen]
+        all_true_profs = all_true_profs[:num_samples_seen]
+        all_true_counts = all_true_counts[:num_samples_seen]
+        return batch_losses, all_log_pred_profs, all_log_pred_counts, \
+            all_true_profs, all_true_counts
     else:
         return batch_losses
 
 
 @train_ex.capture
-def train(
-    train_enq, val_enq, num_workers, num_epochs, early_stopping,
+def train_model(
+    train_enq, val_enq, num_tasks, num_workers, num_epochs, early_stopping,
     early_stop_hist_len, early_stop_min_delta, train_seed, _run
 ):
     """
     Trains the network for the given training and validation data.
     Arguments:
-        `train_enq` (OrderedEnqueuer): an enqueuer for the training data,
-            each batch giving the 1-hot encoded sequence and profiles
-        `val_enq` (OrderedEnqueuer): an enqueuer for the validation data,
-            each batch giving the 1-hot encoded sequence and profiles
+        `train_enq` (OrderedEnqueuer's generator): a data loader for the
+            training data, each batch giving the 1-hot encoded sequence,
+            profiles, and statuses
+        `val_enq` (OrderedEnqueuer's generator): a data loader for the
+            validation data, each batch giving the 1-hot encoded sequence,
+            profiles, and statuses
     """
     run_num = _run._id
     output_dir = os.path.join(MODEL_DIR, str(run_num))
@@ -268,15 +268,15 @@ def train(
     if early_stopping:
         val_epoch_loss_hist = []
 
-    # Start the enqueuers
+    # Start the enqueuers and get the generators
     train_enq.start(num_workers, num_workers * 2)
+    train_num_batches = len(train_enq.sequence)
     val_enq.start(num_workers, num_workers * 2)
-    train_queue, val_queue = train_enq.get(), val_enq.get()
-    train_batch_num = len(train_enq.sequence)
-    val_batch_num = len(val_enq.sequence)
+    val_num_batches = len(val_enq.sequence)
+    train_gen, val_gen= train_enq.get(), val_enq.get()
 
     for epoch in range(num_epochs):
-        t_batch_losses = train_epoch(train_queue, train_batch_num, model)
+        t_batch_losses = run_epoch(train_gen, train_num_batches, "train", model)
         t_epoch_loss = util.nan_mean(t_batch_losses)
         print(
             "Train epoch %d: %6.10f average loss" % (
@@ -290,7 +290,7 @@ def train(
         if np.isnan(t_epoch_loss):
             break
 
-        v_batch_losses = eval_epoch(val_queue, val_batch_num, model)
+        v_batch_losses = run_epoch(val_gen, val_num_batches, "eval", model)
         v_epoch_loss = util.nan_mean(v_batch_losses)
         print(
             "Valid epoch %d: %6.10f average loss" % (
@@ -323,30 +323,50 @@ def train(
                 if best_delta < early_stop_min_delta:
                     break  # Not improving enough
 
-    print("Running final validation with metrics:")
-    # Run validation metrics
-    _, v_metrics = eval_epoch(
-        val_queue, val_batch_num, model, compute_metrics=True
-    )
-    profile_performance.log_performance(v_metrics, _run)
-
-    # Stop the parallel queues
+    # Stop the parallel enqueuers for training and validation
     train_enq.stop()
     val_enq.stop()
+
+    # Compute evaluation metrics and log them
+    print("Computing validation metrics:")
+    val_enq.start(num_workers, num_workers * 2)
+    val_gen = val_enq.get()
+    val_num_batches = len(val_enq.sequence)
+    _, log_pred_profs, log_pred_counts, true_profs, true_counts = \
+        run_epoch(
+            val_gen, val_num_batches, "eval", model, return_data=True
+    )
+
+    # Compute the performance metrics using a mimicked file
+    metrics = profile_performance_mimic.compute_performance(
+        true_profs, log_pred_profs, np.log(true_counts + 1), log_pred_counts, num_tasks
+    )
+    profile_performance_mimic.log_performance(metrics, _run)
+
+    # Compute the performance metrics using my own way
+    metrics = profile_performance.compute_performance_metrics(
+        true_profs, log_pred_profs, true_counts, log_pred_counts
+    )
+    profile_performance.log_performance_metrics(metrics, "own",  _run)
+   
+    val_enq.stop()  # Stop the parallel enqueuer
 
 
 @train_ex.command
 def run_training(train_peak_beds, val_peak_beds, prof_bigwigs):
-    t_dataset = make_profile_dataset.data_loader_from_beds_and_bigwigs(
+    train_dataset = make_profile_dataset.create_data_loader(
         train_peak_beds, prof_bigwigs
     )
-    v_dataset = make_profile_dataset.data_loader_from_beds_and_bigwigs(
+    val_dataset = make_profile_dataset.create_data_loader(
         val_peak_beds, prof_bigwigs
     )
-    t_enq = keras.utils.OrderedEnqueuer(t_dataset, use_multiprocessing=True)
-    v_enq = keras.utils.OrderedEnqueuer(v_dataset, use_multiprocessing=True)
-
-    train(t_enq, v_enq)
+    train_enq = keras.utils.OrderedEnqueuer(
+        train_dataset, use_multiprocessing=True
+    )
+    val_enq = keras.utils.OrderedEnqueuer(
+        val_dataset, use_multiprocessing=True
+    )
+    train_model(train_enq, val_enq)
 
 
 @train_ex.automain
