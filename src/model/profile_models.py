@@ -217,6 +217,7 @@ def profile_logits_to_log_probs(logit_pred_profs):
         return logit_pred_profs - \
             tf.reduce_logsumexp(logit_pred_profs, axis=2, keep_dims=True)
 
+
 def profile_loss(
     true_prof_counts, logit_pred_profs, num_tasks, profile_length
 ):
