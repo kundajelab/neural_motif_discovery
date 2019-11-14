@@ -85,11 +85,11 @@ def main(file_specs_json_path, num_runs, config_json_path, config_cli_tokens):
         np.random.seed()  # Re-seed to random number
         hparams = {
             "train": {
-                "learning_rate": uniformly_sample_dist(-3, -5, log_scale=True),
+                "learning_rate": uniformly_sample_dist(-1, -4, log_scale=True),
                 "counts_loss_weight": uniformly_sample_dist(1, 4, log_scale=True)
             },
             "dataset": {
-                "batch_size": uniformly_sample_list([32, 64, 128, 256])
+                "batch_size": uniformly_sample_list([32, 64, 128])
             }
         }
         return hparams

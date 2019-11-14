@@ -23,38 +23,62 @@ def config():
     auprc_max_neg_prob = 0.05
 
 
-def profile_multinomial_nll(
-    true_prof_counts, pred_prof_log_probs, true_total_counts
-):
+def multinomial_log_probs(category_log_probs, trials, query_counts):
     """
-    Computes the multinomial negative log likelihood of the true profiles, given
-    the probabilties of the predicted profile.
+    Defines multinomial distributions and computes the probability of seeing
+    the queried counts under these distributions. This defines D different
+    distributions (that all have the same number of classes), and returns D
+    probabilities corresponding to each distribution.
     Arguments:
-        `true_prof_counts`: N x T x O x 2 array, where N is the number of
-            examples, T is the number of tasks, and O is the output profile
-            length; contains the true profiles for each task and for each
-            strand, as RAW COUNTS
-        `pred_prof_log_probs`: a N x T x O x 2 array, containing the predicted
-            profiles for each task and strand, as LOG PROBABILITIES
-        `true_total_counts`: a N x T x 2 array, containing the true total counts
-            for each task and strand
-    Returns an array of T items, containing the negative log likelihoods,
-    averaged across the pooled strands and examples, for each task.
+        `category_log_probs`: a D x N array containing log probabilities (base
+            e) of seeing each of the N classes/categories
+        `trials`: a D-array containing the total number of trials for each
+            distribution (can be different numbers)
+        `query_counts`: a D x N array containing the observed count of each
+            category in each distribution; the probability is computed for these
+            observations
+    Returns a D-array containing the log probabilities (base e) of each observed
+    query with its corresponding distribution. Note that D can be replaced with
+    any shape (i.e. only the last dimension is reduced).
     """
     # Multinomial probability = n! / (x1!...xk!) * p1^x1 * ... pk^xk
     # Log prob = log(n!) - (log(x1!) ... + log(xk!)) + x1log(p1) ... + xklog(pk)
+    log_n_fact = scipy.special.gammaln(trials + 1)
+    log_counts_fact = scipy.special.gammaln(query_counts + 1)
+    log_counts_fact_sum = np.sum(log_counts_fact, axis=-1)
+    log_prob_pows = category_log_probs * query_counts  # Elementwise
+    log_prob_pows_sum = np.sum(log_prob_pows, axis=-1)
 
-    log_n_fact = scipy.special.gammaln(true_total_counts + 1)
-    log_counts_fact = scipy.special.gammaln(true_prof_counts + 1)
-    log_counts_fact_sum = np.sum(log_counts_fact, axis=2)
-    log_prob_pows = pred_prof_log_probs * true_prof_counts  # Elementwise
-    log_prob_pows_sum = np.sum(log_prob_pows, axis=2)
+    return log_n_fact - log_counts_fact_sum + log_prob_pows_sum
 
-    nll = log_counts_fact_sum - log_n_fact - log_prob_pows_sum
-    # Shape: N x T x 2
-    nll = np.transpose(nll, axes=(1, 0, 2))  # Shape: T x N x 2
-    nll = np.reshape(nll, (nll.shape[0], -1))  # Shape: T x 2N
-    return np.mean(nll, axis=1)
+
+def profile_multinomial_nll(true_profs, log_pred_profs, true_counts):
+    """
+    Computes the negative log likelihood of seeing the true profile, given the
+    probabilities specified by the predicted profile. The NLL is computed
+    separately for each sample, task, and strand, but the results are averaged
+    across the strands.
+    Arguments:
+        `true_profs`: N x T x O x 2 array, where N is the number of
+            examples, T is the number of tasks, and O is the output profile
+            length; contains the true profiles for each for each task and
+            strand, as RAW counts
+        `log_pred_profs`: a N x T x O x 2 array, containing the predicted
+            profiles for each task and strand, as LOG probabilities
+        `true_counts`: a N x T x 2 array, containing the true total counts
+            for each task and strand
+    Returns an N x T array, containing the strand-pooled multinomial NLL for
+    each sample and task.
+    """
+    num_samples = true_profs.shape[0]
+    num_tasks = true_profs.shape[1]
+
+    # Swap axes on profiles to make them N x T x 2 x O
+    true_profs = np.swapaxes(true_profs, 2, 3)
+    log_pred_profs = np.swapaxes(log_pred_profs, 2, 3)
+
+    nll = -multinomial_log_probs(log_pred_profs, true_counts, true_profs)
+    return np.mean(nll, axis=2)  # Average strands
 
 
 def _kl_divergence(probs1, probs2):
@@ -122,17 +146,21 @@ def profile_jsd(true_prof_probs, pred_prof_probs):
     return np.mean(jsd, axis=-1)  # Average over strands
 
 
-def bin_array_max(arr, bin_size, pad=0):
+def bin_array_max(arr, bin_size, pad_value=0):
     """
     Given a NumPy array, returns a binned version of the array along the last
     dimension, where each bin contains the maximum value of its constituent
     elements. If the array is not a length that is a multiple of the bin size,
     then the given pad will be used at the end.
     """
-    pad_amount = arr.shape[-1] % bin_size
+    num_bins = int(np.ceil(arr.shape[-1] / bin_size))
+    pad_amount = (num_bins * bin_size) - arr.shape[-1]
     if pad_amount:
-        arr = np.pad(arr, ([(0, 0)] * (arr.ndim - 1)) + [(0, pad_amount)])
-    new_shape = arr.shape[:-1] + (arr.shape[-1] // bin_size, bin_size)
+        arr = np.pad(
+            arr, ([(0, 0)] * (arr.ndim - 1)) + [(0, pad_amount)],
+            constant_values=pad_value
+        )
+    new_shape = arr.shape[:-1] + (num_bins, bin_size)
     return np.max(np.reshape(arr, new_shape), axis=-1)
 
 
@@ -229,7 +257,8 @@ def auprc_score(true_vals, pred_vals):
 @performance_ex.capture
 def binned_profile_auprc(
     true_prof_counts, pred_prof_probs, true_total_counts, auprc_bin_sizes,
-    auprc_min_pos_prob, auprc_min_pos_count, auprc_max_neg_prob
+    auprc_min_pos_prob, auprc_min_pos_count, auprc_max_neg_prob,
+    batch_size=50000
 ):
     """
     Binarizes the profile and computes auPRC for different bin sizes.
@@ -241,6 +270,7 @@ def binned_profile_auprc(
             profiles for each task and strand, as RAW PROBABILITIES
         `true_total_counts`: a B x T x 2 array, containing the true total counts
             for each task and strand
+        `batch_size`: performs computation in a batch size of this many samples
     Returns an N x T x Z x 4 array containing the auPRCs for each sample and
     task, where each auPRC is computed across both strands (pooled), for each
     sample and task. This is done for every bin size in `auprc_bin_sizes`. For
@@ -270,27 +300,34 @@ def binned_profile_auprc(
         true_count_bins = bin_array_max(true_prof_counts_flat, bin_size)
         pred_prob_bins = bin_array_max(pred_prof_probs_flat, bin_size)
 
-        # Filter for the positives and negatives
-        # A bin is positive if the maximum count inside it is at least a minimum
-        # number of reads, and the maximum probability inside is at least the
-        # minimum fraction of total reads
-        pos_mask = (true_count_bins >= auprc_min_pos_count) & \
-            (true_prob_bins >= auprc_min_pos_prob)
-        neg_mask = true_prob_bins <= auprc_max_neg_prob
+        for start in range(0, num_samples, batch_size):
+            end = start + batch_size
+            true_prob_batch = true_prob_bins[start:end, :, :]
+            true_count_batch = true_count_bins[start:end, :, :]
+            pred_prob_batch = pred_prob_bins[start:end, :, :]
 
-        num_pos, num_neg = np.sum(pos_mask, axis=-1), np.sum(neg_mask, axis=-1)
-        num_ambi = true_prob_bins.shape[-1] - num_pos - num_neg
+            # Filter for the positives and negatives
+            # A bin is positive if the maximum count inside it is at least a
+            # minimum number of reads, and the maximum probability inside is at
+            # least the minimum fraction of total reads
+            pos_mask = (true_count_batch >= auprc_min_pos_count) & \
+                (true_prob_batch >= auprc_min_pos_prob)
+            neg_mask = true_prob_batch <= auprc_max_neg_prob
 
-        true_vals = np.full(true_count_bins.shape, -1)
-        true_vals[pos_mask] = 1
-        true_vals[neg_mask] = 0
-        pred_vals = pred_prob_bins
-        auprc = auprc_score(true_vals, pred_vals)
+            num_pos = np.sum(pos_mask, axis=-1)
+            num_neg = np.sum(neg_mask, axis=-1)
+            num_ambi = true_prob_bins.shape[-1] - num_pos - num_neg
 
-        result[:, :, i, 0] = auprc
-        result[:, :, i, 1] = num_pos
-        result[:, :, i, 2] = num_ambi
-        result[:, :, i, 3] = num_neg
+            true_vals = np.full(true_count_batch.shape, -1)
+            true_vals[pos_mask] = 1
+            true_vals[neg_mask] = 0
+            pred_vals = pred_prob_batch
+            auprc = auprc_score(true_vals, pred_vals)
+
+            result[start:end, :, i, 0] = auprc
+            result[start:end, :, i, 1] = num_pos
+            result[start:end, :, i, 2] = num_ambi
+            result[start:end, :, i, 3] = num_neg
 
     return result
 
@@ -484,8 +521,9 @@ def compute_performance_metrics(
             counts for each task and strand
         `print_updates`: if True, print out updates and runtimes
     Returns 2 dictionaries. The first dictionary contains:
-        A T-array of the average negative log likelihoods for the profiles
-            (given predicted probabilities, the likelihood for the true counts)
+        A N x T-array of the average negative log likelihoods for the profiles
+            (given predicted probabilities, the likelihood for the true counts),
+            for each sample/task (strands pooled)
         A N x T array of average Jensen-Shannon divergence between the predicted
             and true profiles (strands averaged)
         A N x T x Z x 4 array of the auPRCs for the binned and binarized
@@ -593,7 +631,7 @@ def log_performance_metrics(
     """
     # Before logging, condense the metrics into averages over the samples (when
     # appropriate)
-    nll = metrics["nll"]  # T
+    nll = np.nanmean(metrics["nll"], axis=0)  # T
     jsd = np.nanmean(metrics["jsd"], axis=0)  # T
     auprc_bin = np.nanmean(metrics["auprc_binned"][:, :, :, 0], axis=0)  # T x Z
     pears_bin = np.nanmean(metrics["pearson_binned"], axis=0)  # T x Z

@@ -196,8 +196,6 @@ def run_epoch(
 
     for _ in t_iter:
         input_seqs, profiles, statuses = next(data_gen)
-        # Make length come before strands in profiles
-        profiles = np.swapaxes(profiles, 2, 3)
 
         tf_profs = profiles[:, :num_tasks, :, :]
         cont_profs = profiles[:, num_tasks:, :, :]

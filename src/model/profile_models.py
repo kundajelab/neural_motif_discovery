@@ -286,7 +286,7 @@ def count_loss(true_counts, log_pred_counts, num_tasks):
     log_true_counts = tf.log(true_counts + 1)
 
     sq_diffs = tf.math.squared_difference(log_pred_counts, log_true_counts)
-    batch_count_loss = tf.reduce_mean(sq_diffs, axis=1)  # Average acorss tasks
-    count_loss = tf.reduce_mean(batch_count_loss)  # average across batch
+    batch_count_loss = tf.reduce_mean(sq_diffs, axis=1)  # Average across tasks
+    count_loss = tf.reduce_mean(batch_count_loss)  # Average across batch
 
     return count_loss
