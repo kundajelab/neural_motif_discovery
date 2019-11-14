@@ -197,7 +197,7 @@ def profile_tf_binding_predictor(
     return model
 
 
-def profile_logits_to_log_probs(logit_pred_profs):
+def profile_logits_to_log_probs(logit_pred_profs, axis=2):
     """
     Converts the model's predicted profile logits into normalized probabilities
     via a softmax.
@@ -212,10 +212,10 @@ def profile_logits_to_log_probs(logit_pred_profs):
     """
     if type(logit_pred_profs) is np.ndarray:
         return logit_pred_profs - \
-            scipy.special.logsumexp(logit_pred_profs, axis=2, keepdims=True)
+            scipy.special.logsumexp(logit_pred_profs, axis=axis, keepdims=True)
     else:
         return logit_pred_profs - \
-            tf.reduce_logsumexp(logit_pred_profs, axis=2, keep_dims=True)
+            tf.reduce_logsumexp(logit_pred_profs, axis=axis, keep_dims=True)
 
 
 def profile_loss(
