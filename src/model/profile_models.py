@@ -152,16 +152,23 @@ def profile_tf_binding_predictor(
 
     # A3. Perform length-1 convolutions over the concatenated profiles with
     # controls; there are T convolutions, each one is done over one pair of
-    # prof_large_conv_out, and a pair of controls; this is implemented as
-    # a 2D convolution with a 1 x 1 filter
-    prof_one_conv = kl.Conv2D(
-        filters=2, kernel_size=(1, 1), padding="valid",
-        name="prof_one_conv"
-    )
-    prof_one_conv_out = prof_one_conv(prof_with_cont)  # Shape: B x O x T x 2
-    prof_pred = kl.Lambda(lambda x: tf.transpose(x, perm=(0, 2, 1, 3)))(
-        prof_one_conv_out
-    )  # Shape: B x T x O x 2
+    # prof_large_conv_out, and a pair of controls; this done by looping over
+    # each task, and doing a 1D convolution on each
+    prof_one_conv_out_arr = []
+    for i in range(num_tasks):
+        task_prof_large_conv_out = kl.Lambda(lambda x: x[:, :, i, :])(
+            prof_with_cont
+        )  # Shape: B x O x 4
+        task_prof_one_conv = kl.Conv1D(
+            filters=2, kernel_size=1, padding="valid",
+            name=("prof_one_conv_%d" % (i + 1))
+        )
+        prof_one_conv_out_arr.append(
+            task_prof_one_conv(task_prof_large_conv_out)  # Shape: B x O x 2
+        )
+    prof_pred = kl.Lambda(lambda x: tf.stack(x, axis=1))(
+        prof_one_conv_out_arr
+    )  # Shape: B x O x T x 2
 
     # Branch B: read count prediction
     # B1. Global average pooling across the output of dilated convolutions

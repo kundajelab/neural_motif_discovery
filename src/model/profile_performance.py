@@ -279,7 +279,7 @@ def auprc_score(true_vals, pred_vals):
 def binned_profile_auprc(
     true_prof_counts, pred_prof_probs, true_total_counts, auprc_bin_sizes,
     auprc_min_pos_prob, auprc_min_pos_count, auprc_max_neg_prob,
-    batch_size=50000
+    batch_size=1000
 ):
     """
     Binarizes the profile and computes auPRC for different bin sizes.
@@ -452,7 +452,7 @@ def mean_squared_error(arr1, arr2):
 @performance_ex.capture
 def binned_profile_corr_mse(
     true_prof_probs, pred_prof_probs, prof_count_corr_bin_sizes,
-    batch_size=50000
+    batch_size=1000
 ):
     """
     Returns the correlations of the true and predicted PROFILE counts (i.e.

@@ -49,7 +49,7 @@ def test_max_binning():
 
 def test_vectorized_multinomial_nll():
     np.random.seed(20191110)
-    batch_size, num_tasks, prof_len = 1, 1, 10
+    batch_size, num_tasks, prof_len = 500, 5, 1000
     prof_shape = (batch_size, num_tasks, prof_len, 2)
     true_profs_np = np.random.randint(5, size=prof_shape)
     logit_pred_profs_np = np.random.randn(*prof_shape)
