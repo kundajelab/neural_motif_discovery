@@ -5,6 +5,7 @@ import os
 import click
 import sacred
 import json
+import multiprocessing
 
 hyperparam_ex = sacred.Experiment("hyperparam")
 
@@ -44,7 +45,10 @@ def deep_update(parent, update):
             parent[key] = val
 
 
-@hyperparam_ex.capture
+def run_train_command(config_updates):
+    train.train_ex.run("run_training", config_updates=config_updates)
+
+
 def launch_training(
     hparams, base_config, train_peak_beds, val_peak_beds, prof_bigwigs
 ):
@@ -62,7 +66,12 @@ def launch_training(
     config_updates["val_peak_beds"] = val_peak_beds
     config_updates["prof_bigwigs"] = prof_bigwigs 
 
-    train.train_ex.run("run_training", config_updates=config_updates)
+    proc = multiprocessing.Process(
+        target=run_train_command, args=(config_updates,)
+    )
+    proc.start()
+    proc.join()  # Wait until the training process stops
+    print("END OF LAUNCH")
 
 
 @click.command()
@@ -139,6 +148,7 @@ def main(file_specs_json_path, num_runs, config_json_path, config_cli_tokens):
             sample_hyperparams(), base_config, train_peak_beds, val_peak_beds,
             prof_bigwigs
         )
+        print("END OF ITERATION")
     
         
 if __name__ == "__main__":

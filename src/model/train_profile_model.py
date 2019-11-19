@@ -362,6 +362,11 @@ def train_model(
         )
         profile_performance.log_performance_metrics(metrics, prefix,  _run)
         data_enq.stop()  # Stop the parallel enqueuer
+        # Garbage collection
+        del log_pred_profs, log_pred_counts, true_profs, true_counts
+        del metrics
+
+    print("END OF TRAINING")
 
 
 @train_ex.command
@@ -386,6 +391,7 @@ def run_training(train_peak_beds, val_peak_beds, prof_bigwigs):
         ]
     ]
     train_model(train_enq, val_enq, summit_enq, peak_enq)
+    print("END OF COMMAND")
 
 
 @train_ex.automain

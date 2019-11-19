@@ -176,7 +176,7 @@ def profile_tf_binding_predictor(
     count_pool_out = count_pool(dil_conv_crop_out)  # Shape: B x P
 
     # B2. Reduce pooling output to fewer features, a pair for each task
-    count_dense = kl.Dense(units=(num_tasks * 2), name="count_dense")
+    count_dense = kl.Dense(units=(num_tasks * 2), name="count_pair_dense")
     count_dense_out = count_dense(count_pool_out)  # Shape: B x 2T
 
     # B3. Concatenate with the control counts
@@ -189,13 +189,21 @@ def profile_tf_binding_predictor(
     # Shape: B x T x 4
 
     # B4. Dense layer over the concatenation with control counts; each set
-    # of counts gets a different dense network (implemented as convolution
-    # with kernel size 1)
-    count_one_conv = kl.Conv1D(
-        filters=2, kernel_size=1, name="count_one_conv"
-    )
-    count_one_conv_out = count_one_conv(count_with_cont)  # Shape: B x T x 2
-    count_pred = count_one_conv_out
+    # of counts gets a different dense network
+    count_out_dense_arr = []
+    for i in range(num_tasks):
+        task_count_with_cont_out = kl.Lambda(lambda x: x[:, i, :])(
+            count_with_cont
+        )  # Shape: B x 4
+        task_count_out_dense = kl.Dense(
+            units=2, name=("count_out_dense_%d" % (i + 1))
+        )
+        count_out_dense_arr.append(
+            task_count_out_dense(task_count_with_cont_out)  # Shape: B x 2
+        )
+    count_pred = kl.Lambda(lambda x: tf.stack(x, axis=1))(
+       count_out_dense_arr 
+    )  # Shape: B x T x 2
 
     # Create model
     model = km.Model(
