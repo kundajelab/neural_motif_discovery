@@ -12,7 +12,7 @@ import tensorflow as tf
 
 MODEL_DIR = os.environ.get(
     "MODEL_DIR",
-    "/users/amtseng/tfmodisco/models/trained_profile_models/"
+    "/users/amtseng/tfmodisco/models/trained_models/misc/"
 )
 
 train_ex = sacred.Experiment("train", ingredients=[
@@ -366,8 +366,6 @@ def train_model(
         del log_pred_profs, log_pred_counts, true_profs, true_counts
         del metrics
 
-    print("END OF TRAINING")
-
 
 @train_ex.command
 def run_training(train_peak_beds, val_peak_beds, prof_bigwigs):
@@ -391,7 +389,6 @@ def run_training(train_peak_beds, val_peak_beds, prof_bigwigs):
         ]
     ]
     train_model(train_enq, val_enq, summit_enq, peak_enq)
-    print("END OF COMMAND")
 
 
 @train_ex.automain
@@ -427,10 +424,10 @@ def main():
             "SPI1/SPI1_ENCSR000BIJ_GM12891_pos.bw"),
             ("SPI1/SPI1_ENCSR000BUW_HL-60_neg.bw",
             "SPI1/SPI1_ENCSR000BUW_HL-60_pos.bw"),
-            ("SPI1/control_ENCSR000BGG_K562_neg.bw",
-            "SPI1/control_ENCSR000BGG_K562_pos.bw"),
             ("SPI1/control_ENCSR000BGH_GM12878_neg.bw",
             "SPI1/control_ENCSR000BGH_GM12878_pos.bw"),
+            ("SPI1/control_ENCSR000BGG_K562_neg.bw",
+            "SPI1/control_ENCSR000BGG_K562_pos.bw"),
             ("SPI1/control_ENCSR000BIH_GM12891_neg.bw",
             "SPI1/control_ENCSR000BIH_GM12891_pos.bw"),
             ("SPI1/control_ENCSR000BVU_HL-60_neg.bw",

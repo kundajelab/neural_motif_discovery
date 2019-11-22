@@ -71,7 +71,6 @@ def launch_training(
     )
     proc.start()
     proc.join()  # Wait until the training process stops
-    print("END OF LAUNCH")
 
 
 @click.command()
@@ -148,7 +147,6 @@ def main(file_specs_json_path, num_runs, config_json_path, config_cli_tokens):
             sample_hyperparams(), base_config, train_peak_beds, val_peak_beds,
             prof_bigwigs
         )
-        print("END OF ITERATION")
     
         
 if __name__ == "__main__":

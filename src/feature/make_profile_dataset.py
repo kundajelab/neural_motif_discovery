@@ -420,9 +420,9 @@ class CoordDataset(keras.utils.data_utils.Sequence):
 
         if self.return_coords:
             if self.revcomp:
-                coords_ret = np.concatenate([coords, coords])
-                peaks_ret = np.concatenate([peaks, peaks])
-            return seqs, profiles, status, coords_ret, peaks_ret
+                coords = np.concatenate([coords, coords])
+                peaks = np.concatenate([peaks, peaks])
+            return seqs, profiles, status, coords, peaks
         else:
             return seqs, profiles, status
 
@@ -467,8 +467,8 @@ def create_data_loader(
             and peak data along with the profiles in each batch
     """
     assert sampling_type in (
-            "SamplingCoordsBatcher", "SummitCenteringCoordsBatcher",
-            "PeakTilingCoordsBatcher"
+        "SamplingCoordsBatcher", "SummitCenteringCoordsBatcher",
+        "PeakTilingCoordsBatcher"
     )
 
     # Maps set of coordinates to profiles
