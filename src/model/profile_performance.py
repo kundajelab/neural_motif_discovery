@@ -654,36 +654,31 @@ def log_performance_metrics(
     them to a Sacred logging object (`_run`), and optionally prints out a log.
     When logging, `prefix` is prepended to each output key.
     """
-    # Before logging, condense the metrics into averages over the samples (when
-    # appropriate)
-    nll = np.nanmean(metrics["nll"], axis=0)  # T
-    jsd = np.nanmean(metrics["jsd"], axis=0)  # T
-    auprc_bin = np.nanmean(metrics["auprc_binned"][:, :, :, 0], axis=0)  # T x Z
-    pears_bin = np.nanmean(metrics["pearson_binned"], axis=0)  # T x Z
-    spear_bin = np.nanmean(metrics["spearman_binned"], axis=0)  # T x Z
-    mse_bin = np.nanmean(metrics["mse_binned"], axis=0)  # T x Z
+    nll = metrics["nll"]  # N x T
+    jsd = metrics["jsd"]  # N x T
+    auprc_bin = metrics["auprc_binned"][:, :, :, 0]  # N x T x Z
+    pears_bin = metrics["pearson_binned"]  # N x T x Z
+    spear_bin = metrics["spearman_binned"]  # N x T x Z
+    mse_bin = metrics["mse_binned"]  # N x T x Z
     pears_tot = metrics["pearson_total"]  # T
     spear_tot = metrics["spearman_total"]  # T
     mse_tot = metrics["mse_total"]  # T
-    # At this point, these metrics are all extracted from the dictionary and are
-    # either T-arrays or T x Z arrays (where T is the number of tasks and Z is
-    # the number of bin sizes for a metric)
 
-    _run.log_scalar("%s_prof_nll" % prefix, list(nll))
-    _run.log_scalar("%s_prof_jsd" % prefix, list(jsd))
+    _run.log_scalar("%s_prof_nll" % prefix, nll.tolist())
+    _run.log_scalar("%s_prof_jsd" % prefix, jsd.tolist())
     for i, bin_size in enumerate(auprc_bin_sizes):
         _run.log_scalar(
-            "%s_prof_auprc_bin%d" % (prefix, bin_size), list(auprc_bin[:, i])
+            "%s_prof_auprc_bin%d" % (prefix, bin_size), auprc_bin[:, :, i].tolist()
         )
     for i, bin_size in enumerate(prof_count_corr_bin_sizes):
         _run.log_scalar(
-            "%s_prof_pearson_bin%d" % (prefix, bin_size), list(pears_bin[:, i])
+            "%s_prof_pearson_bin%d" % (prefix, bin_size), pears_bin[:, :, i].tolist()
         )
         _run.log_scalar(
-            "%s_prof_spearman_bin%d" % (prefix, bin_size), list(spear_bin[:, i])
+            "%s_prof_spearman_bin%d" % (prefix, bin_size), spear_bin[:, :, i].tolist()
         )
         _run.log_scalar(
-            "%s_prof_mse_bin%d" % (prefix, bin_size), list(mse_bin[:, i])
+            "%s_prof_mse_bin%d" % (prefix, bin_size), mse_bin[:, :, i].tolist()
         )
     _run.log_scalar("%s_count_pearson" % prefix, list(pears_tot))
     _run.log_scalar("%s_count_spearman" % prefix, list(spear_tot))
@@ -691,31 +686,31 @@ def log_performance_metrics(
 
     if print_log:
         print(("\t%s profile NLL: " % prefix) + ", ".join(
-            [("%6.6f" % x) for x in nll]
+            [("%6.6f" % x) for x in np.nanmean(nll, axis=0)]
         ))
         print(("\t%s profile JSD: " % prefix) + ", ".join(
-            [("%6.6f" % x) for x in jsd]
+            [("%6.6f" % x) for x in np.nanmean(jsd, axis=0)]
         ))
         for i, bin_size in enumerate(auprc_bin_sizes):
             print(
                 ("\t%s profile auPRC (bin size = %d): " % \
                 (prefix, bin_size)) + \
-                ", ".join([("%6.6f" % x) for x in auprc_bin[:, i]])
+                ", ".join([("%6.6f" % x) for x in np.nanmean(auprc_bin[:, :, i], axis=0)])
             )
         for i, bin_size in enumerate(prof_count_corr_bin_sizes):
             print(
                 ("\t%s profile Pearson (bin size = %d): " % \
                 (prefix, bin_size)) + \
-                ", ".join([("%6.6f" % x) for x in pears_bin[:, i]])
+                ", ".join([("%6.6f" % x) for x in np.nanmean(pears_bin[:, :, i], axis=0)])
             )
             print(
                 ("\t%s profile Spearman (bin size = %d): " % \
                 (prefix, bin_size)) + \
-                ", ".join([("%6.6f" % x) for x in spear_bin[:, i]])
+                ", ".join([("%6.6f" % x) for x in np.nanmean(spear_bin[:, :, i], axis=0)])
             )
             print(
                 ("\t%s profile MSE (bin size = %d): " % (prefix, bin_size)) + \
-                ", ".join([("%6.6f" % x) for x in mse_bin[:, i]])
+                ", ".join([("%6.6f" % x) for x in np.nanmean(mse_bin[:, :, i], axis=0)])
             )
         print(("\t%s count Pearson: " % prefix) + ", ".join(
             [("%6.6f" % x) for x in pears_tot]

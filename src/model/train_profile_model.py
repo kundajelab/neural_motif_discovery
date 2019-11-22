@@ -8,11 +8,14 @@ import model.profile_models as profile_models
 import model.profile_performance as profile_performance
 import feature.make_profile_dataset as make_profile_dataset
 import keras.optimizers
+import keras.models
+import keras.backend as kb
 import tensorflow as tf
+import hashlib
 
 MODEL_DIR = os.environ.get(
     "MODEL_DIR",
-    "/users/amtseng/tfmodisco/models/trained_profile_models/"
+    "/users/amtseng/tfmodisco/models/trained_models/misc"
 )
 
 train_ex = sacred.Experiment("train", ingredients=[
@@ -56,7 +59,7 @@ def config(dataset):
     counts_loss_weight = 100
 
     # Number of training epochs
-    num_epochs = 10
+    num_epochs = 0
 
     # Learning rate
     learning_rate = 0.004
@@ -157,7 +160,7 @@ def create_model(
 @train_ex.capture
 def run_epoch(
     data_gen, num_batches, mode, model, num_tasks, batch_size, revcomp,
-    profile_length, batch_nan_limit, return_data=False
+    profile_length, batch_nan_limit, save_coords=False, return_data=False
 ):
     """
     Runs the data from the data loader once through the model, to train,
@@ -192,10 +195,21 @@ def run_epoch(
         all_log_pred_counts = np.empty(count_shape)
         all_true_profs = np.empty(profile_shape)
         all_true_counts = np.empty(count_shape)
+        all_coords = np.empty((num_samples_exp, 3), dtype=object)
+        all_peaks = np.empty((num_samples_exp, 3), dtype=int)
+        all_inputs = np.empty((num_samples_exp, 1346, 4))
+        all_profiles = np.empty((num_samples_exp, num_tasks * 2, profile_length, 2))
         num_samples_seen = 0  # Real number of samples seen
 
+    i = 0
     for _ in t_iter:
-        input_seqs, profiles, statuses = next(data_gen)
+        if i == 2:
+            break
+        i += 1
+        if return_data:
+            input_seqs, profiles, statuses, coords, peaks = next(data_gen)
+        else:
+            input_seqs, profiles, statuses = next(data_gen)
 
         tf_profs = profiles[:, :num_tasks, :, :]
         cont_profs = profiles[:, num_tasks:, :, :]
@@ -206,9 +220,10 @@ def run_epoch(
                 [input_seqs, cont_profs], [tf_profs, tf_counts]
             )
         else:
-            losses = model.test_on_batch(
-                [input_seqs, cont_profs], [tf_profs, tf_counts]
-            )
+            losses = [-1]
+            # losses = model.test_on_batch(
+            #     [input_seqs, cont_profs], [tf_profs, tf_counts]
+            # )
         batch_losses.append(losses[0])
         
         if len(batch_losses) >= batch_nan_limit and np.all(
@@ -237,6 +252,10 @@ def run_epoch(
             all_log_pred_counts[start:end] = log_pred_counts
             all_true_profs[start:end] = tf_profs
             all_true_counts[start:end] = tf_counts
+            all_coords[start:end] = coords
+            all_peaks[start:end] = peaks
+            all_inputs[start:end] = input_seqs
+            all_profiles[start:end] = profiles
 
             num_samples_seen += num_in_batch
 
@@ -247,15 +266,20 @@ def run_epoch(
         all_log_pred_counts = all_log_pred_counts[:num_samples_seen]
         all_true_profs = all_true_profs[:num_samples_seen]
         all_true_counts = all_true_counts[:num_samples_seen]
+        all_coords = all_coords[:num_samples_seen]
+        all_peaks = all_peaks[:num_samples_seen]
+        all_inputs = all_inputs[:num_samples_seen]
+        all_profiles = all_profiles[:num_samples_seen]
         return batch_losses, all_log_pred_profs, all_log_pred_counts, \
-            all_true_profs, all_true_counts
+            all_true_profs, all_true_counts, all_coords, all_peaks, all_inputs, all_profiles
     else:
         return batch_losses
 
 
+model = None
 @train_ex.capture
 def train_model(
-    train_enq, val_enq, summit_enq, peak_enq, num_workers, num_epochs,
+    train_enq, val_enq, summit_enq, peak_enq, num_workers, num_epochs, num_tasks,
     early_stopping, early_stop_hist_len, early_stop_min_delta, train_seed, _run
 ):
     """
@@ -274,6 +298,7 @@ def train_model(
             validation data, with coordinates tiled across peaks, each batch
             giving the 1-hot encoded sequence, profiles, and statuses
     """
+    global model
     run_num = _run._id
     output_dir = os.path.join(MODEL_DIR, str(run_num))
     
@@ -323,6 +348,11 @@ def train_model(
         )
         model.save(savepath)
 
+        model_json = model.to_json()
+        with open(output_dir + ("/model_arch_epoch_%d.json" % (epoch + 1)), "w") as f:
+            f.write(model_json)
+        model.save_weights(output_dir + ("/model_weights_epoch_%d.h5" % (epoch + 1)))
+
         # If validation returned enough NaNs in a row, then stop
         if np.isnan(v_epoch_loss):
             break
@@ -346,25 +376,104 @@ def train_model(
 
     # Compute evaluation metrics and log them
     for data_enq, prefix in [
-        (summit_enq, "summit"), (peak_enq, "peak"), (val_enq, "genomewide")
+        (summit_enq, "summit"), # (peak_enq, "peak"), (val_enq, "genomewide")
     ]:
         print("Computing validation metrics, %s:" % prefix)
         data_enq.start(num_workers, num_workers * 2)
         data_gen = data_enq.get()
         data_num_batches = len(data_enq.sequence)
-        _, log_pred_profs, log_pred_counts, true_profs, true_counts = \
-            run_epoch(
+        _, log_pred_profs, log_pred_counts, true_profs, true_counts, coords, \
+            peaks, inputs, profiles = run_epoch(
                 data_gen, data_num_batches, "eval", model, return_data=True
         )
+        _run.log_scalar("%s_coords" % prefix, coords)
+        _run.log_scalar("%s_peaks" % prefix, peaks)
+
+        np.save(output_dir + "/true_profs", true_profs)
+        np.save(output_dir + "/log_pred_profs", log_pred_profs)
+        np.save(output_dir + "/true_counts", true_counts)
+        np.save(output_dir + "/log_pred_counts", log_pred_counts)
+        np.save(output_dir + "/inputs", inputs)
+        np.save(output_dir + "/profiles", profiles)
 
         metrics = profile_performance.compute_performance_metrics(
             true_profs, log_pred_profs, true_counts, log_pred_counts
         )
+
         profile_performance.log_performance_metrics(metrics, prefix,  _run)
         data_enq.stop()  # Stop the parallel enqueuer
-        # Garbage collection
-        del log_pred_profs, log_pred_counts, true_profs, true_counts
-        del metrics
+
+    hashfn = lambda x: hashlib.sha1(str(x).encode()).hexdigest()
+    print("Hash of weights:")
+    print(hashfn(model.get_weights()))
+ 
+    print("Hash of inputs:")
+    print(hashfn(inputs))
+    print("Hash of profiles:")
+    print(hashfn(profiles))
+
+    print("Hash of log_pred_profs A:")
+    print(hashfn(log_pred_profs))
+    print(np.sum(log_pred_profs))
+    print("Hash of log_pred_counts A:")
+    print(hashfn(log_pred_counts))
+    print(np.sum(log_pred_counts))
+
+
+    true_profs = profiles[:, :num_tasks, :, :]
+    cont_profs = profiles[:, num_tasks:, :, :]
+    true_counts = np.sum(true_profs, axis=2)
+    
+    # Run through the model
+    logit_pred_profs_b, log_pred_counts_b = model.predict_on_batch([inputs, cont_profs])
+    
+    # Convert logit profile predictions to probabilities
+    log_pred_profs_b = profile_models.profile_logits_to_log_probs(
+        logit_pred_profs_b
+    )
+
+    print("Hash of log_pred_profs B:")
+    print(hashfn(log_pred_profs_b))
+    print(np.sum(log_pred_profs_b))
+    print("Hash of log_pred_counts B:")
+    print(hashfn(log_pred_counts_b))
+    print(np.sum(log_pred_counts_b))
+
+    print(np.allclose(log_pred_profs, log_pred_profs_b))
+    print(np.allclose(log_pred_counts, log_pred_counts_b))
+
+    print("")
+
+    savepath = os.path.join(
+        output_dir, "model_ckpt_end.h5"
+    )
+    model.save(savepath)
+
+    model_json = model.to_json()
+    with open(output_dir + "/model_arch_end.json", "w") as f:
+        f.write(model_json)
+    model.save_weights(output_dir + "/model_weights_end.h5")
+
+    custom_objects = {
+        "kb": kb,
+        "profile_loss": get_profile_loss_function(num_tasks, 1000),
+        "count_loss": get_count_loss_function(num_tasks)
+    }
+    l_model = keras.models.load_model(output_dir + "/model_ckpt_end.h5", custom_objects=custom_objects)
+
+    logit_pred_profs_c, log_pred_counts_c = l_model.predict_on_batch([inputs, cont_profs])
+    log_pred_profs_c = profile_models.profile_logits_to_log_probs(logit_pred_profs_c)
+
+    print("Hash of log_pred_profs C:")
+    print(hashfn(log_pred_profs_c))
+    print(np.sum(log_pred_profs_c))
+    print("Hash of log_pred_counts C:")
+    print(hashfn(log_pred_counts_c))
+    print(np.sum(log_pred_counts_c))
+    
+    print(np.allclose(log_pred_profs, log_pred_profs_c))
+    print(np.allclose(log_pred_counts, log_pred_counts_c))
+
 
     print("END OF TRAINING")
 
@@ -375,13 +484,14 @@ def run_training(train_peak_beds, val_peak_beds, prof_bigwigs):
         train_peak_beds, prof_bigwigs, "SamplingCoordsBatcher"
     )
     val_dataset = make_profile_dataset.create_data_loader(
-        val_peak_beds, prof_bigwigs, "SamplingCoordsBatcher"
+        val_peak_beds, prof_bigwigs, "SamplingCoordsBatcher", shuffle=False
     )
     summit_dataset = make_profile_dataset.create_data_loader(
-        val_peak_beds, prof_bigwigs, "SummitCenteringCoordsBatcher"
+        val_peak_beds, prof_bigwigs, "SummitCenteringCoordsBatcher",
+        shuffle=False, return_coords=True
     )
     peak_dataset = make_profile_dataset.create_data_loader(
-        val_peak_beds, prof_bigwigs, "PeakTilingCoordsBatcher"
+        val_peak_beds, prof_bigwigs, "PeakTilingCoordsBatcher", shuffle=False
     )
    
     train_enq, val_enq, summit_enq, peak_enq = [
@@ -427,10 +537,10 @@ def main():
             "SPI1/SPI1_ENCSR000BIJ_GM12891_pos.bw"),
             ("SPI1/SPI1_ENCSR000BUW_HL-60_neg.bw",
             "SPI1/SPI1_ENCSR000BUW_HL-60_pos.bw"),
-            ("SPI1/control_ENCSR000BGG_K562_neg.bw",
-            "SPI1/control_ENCSR000BGG_K562_pos.bw"),
             ("SPI1/control_ENCSR000BGH_GM12878_neg.bw",
             "SPI1/control_ENCSR000BGH_GM12878_pos.bw"),
+            ("SPI1/control_ENCSR000BGG_K562_neg.bw",
+            "SPI1/control_ENCSR000BGG_K562_pos.bw"),
             ("SPI1/control_ENCSR000BIH_GM12891_neg.bw",
             "SPI1/control_ENCSR000BIH_GM12891_pos.bw"),
             ("SPI1/control_ENCSR000BVU_HL-60_neg.bw",

@@ -3,6 +3,7 @@ import numpy as np
 import scipy.special
 import keras.layers as kl
 import keras.models as km
+import keras.backend as kb
 import tensorflow as tf
 
 def multinomial_log_probs(category_log_probs, trials, query_counts):
@@ -113,7 +114,7 @@ def profile_tf_binding_predictor(
         # padding (i.e. "valid" padding)
         last_dil_conv_size = \
             last_dil_conv_size - (dilation * (kernel_size - 1))
-
+ 
     # 2. Truncate the final dilated convolutional layer output so that it
     # only has entries that did not see padding; this is equivalent to
     # truncating it to the size it would be if no padding were ever added
@@ -137,14 +138,14 @@ def profile_tf_binding_predictor(
         "input length of %d and the given convolutions, the computed " +\
         "prediction length is %d" % \
         (profile_length, input_length, prof_pred_size)
-    
+   
     # A2. Concatenate with the control profiles
     # Reshaping is necessary to ensure the tasks are paired together
     prof_large_conv_out = kl.Reshape((-1, num_tasks, 2))(
         prof_large_conv_out
     )  # Shape: B x O x T x 2
     cont_profs_perm = kl.Lambda(
-        lambda x: tf.transpose(x, perm=(0, 2, 1, 3))
+        lambda x: kb.permute_dimensions(x, (0, 2, 1, 3))
     )(cont_profs)  # Shape: B x O x T x 2
     prof_with_cont = kl.Concatenate(axis=3)(
         [prof_large_conv_out, cont_profs_perm]
@@ -154,19 +155,24 @@ def profile_tf_binding_predictor(
     # controls; there are T convolutions, each one is done over one pair of
     # prof_large_conv_out, and a pair of controls; this done by looping over
     # each task, and doing a 1D convolution on each
-    prof_one_conv_out_arr = []
-    for i in range(num_tasks):
-        task_prof_large_conv_out = kl.Lambda(lambda x: x[:, :, i, :])(
-            prof_with_cont
-        )  # Shape: B x O x 4
-        task_prof_one_conv = kl.Conv1D(
+    prof_one_conv_arr = [
+        kl.Conv1D(
             filters=2, kernel_size=1, padding="valid",
             name=("prof_one_conv_%d" % (i + 1))
-        )
+        ) for i in range(num_tasks)
+    ]
+    prof_slicer_arr = [
+        kl.Lambda(lambda x: x[:, :, i, :]) for i in range(num_tasks)
+    ]
+    prof_one_conv_out_arr = []
+    for i in range(num_tasks):
+        task_prof_large_conv_out = prof_slicer_arr[i](prof_with_cont)
+        # Shape: B x O x 4
         prof_one_conv_out_arr.append(
-            task_prof_one_conv(task_prof_large_conv_out)  # Shape: B x O x 2
+            prof_one_conv_arr[i](task_prof_large_conv_out)  # Shape: B x O x 2
         )
-    prof_pred = kl.Lambda(lambda x: tf.stack(x, axis=1))(
+
+    prof_pred = kl.Lambda(lambda x: kb.stack(x, axis=1))(
         prof_one_conv_out_arr
     )  # Shape: B x O x T x 2
 
@@ -181,7 +187,7 @@ def profile_tf_binding_predictor(
 
     # B3. Concatenate with the control counts
     # Reshaping is necessary to ensure the tasks are paired
-    cont_counts = kl.Lambda(lambda x: tf.reduce_sum(x, axis=2))(cont_profs)
+    cont_counts = kl.Lambda(lambda x: kb.sum(x, axis=2))(cont_profs)
     # Shape: B x T x 2
     count_dense_out = kl.Reshape((num_tasks, 2))(count_dense_out)  # Shape:
     #   B x T x 2
@@ -190,18 +196,22 @@ def profile_tf_binding_predictor(
 
     # B4. Dense layer over the concatenation with control counts; each set
     # of counts gets a different dense network
+    count_dense_arr = [
+        kl.Dense(units=2, name=("count_out_dense_%d" % (i + 1)))
+        for i in range(num_tasks)
+    ]
+    count_slicer_arr = [
+        kl.Lambda(lambda x: x[:, i, :]) for i in range(num_tasks)
+    ]
     count_out_dense_arr = []
     for i in range(num_tasks):
-        task_count_with_cont_out = kl.Lambda(lambda x: x[:, i, :])(
-            count_with_cont
-        )  # Shape: B x 4
-        task_count_out_dense = kl.Dense(
-            units=2, name=("count_out_dense_%d" % (i + 1))
-        )
+        task_count_with_cont_out = count_slicer_arr[i](count_with_cont)
+        # Shape: B x 4
         count_out_dense_arr.append(
-            task_count_out_dense(task_count_with_cont_out)  # Shape: B x 2
+            count_dense_arr[i](task_count_with_cont_out)  # Shape: B x 2
         )
-    count_pred = kl.Lambda(lambda x: tf.stack(x, axis=1))(
+
+    count_pred = kl.Lambda(lambda x: kb.stack(x, axis=1))(
        count_out_dense_arr 
     )  # Shape: B x T x 2
 

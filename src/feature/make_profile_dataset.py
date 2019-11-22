@@ -26,7 +26,7 @@ def config():
     input_depth = 4
 
     # Whether or not to perform reverse complement augmentation
-    revcomp = True
+    revcomp = False
 
     # Maximum size of jitter to the input for augmentation; set to 0 to disable
     jitter_size = 50
@@ -41,7 +41,7 @@ def config():
     peak_tiling_stride = 25
 
     # Number of workers for the data loader
-    num_workers = 10
+    num_workers = 1
 
     # Dataset seed (for shuffling)
     dataset_seed = None
@@ -420,9 +420,9 @@ class CoordDataset(keras.utils.data_utils.Sequence):
 
         if self.return_coords:
             if self.revcomp:
-                coords_ret = np.concatenate([coords, coords])
-                peaks_ret = np.concatenate([peaks, peaks])
-            return seqs, profiles, status, coords_ret, peaks_ret
+                coords = np.concatenate([coords, coords])
+                peaks = np.concatenate([peaks, peaks])
+            return seqs, profiles, status, coords, peaks
         else:
             return seqs, profiles, status
 
@@ -467,8 +467,8 @@ def create_data_loader(
             and peak data along with the profiles in each batch
     """
     assert sampling_type in (
-            "SamplingCoordsBatcher", "SummitCenteringCoordsBatcher",
-            "PeakTilingCoordsBatcher"
+        "SamplingCoordsBatcher", "SummitCenteringCoordsBatcher",
+        "PeakTilingCoordsBatcher"
     )
 
     # Maps set of coordinates to profiles
@@ -566,7 +566,7 @@ def main():
     start_time = datetime.now()
 
     enq = keras.utils.OrderedEnqueuer(dataset, use_multiprocessing=True)
-    workers, queue_size = 10, 20
+    workers, queue_size = 1, 2
     enq.start(workers, queue_size)
     para_batch_gen = enq.get()
 
