@@ -59,7 +59,7 @@ def config(dataset):
     counts_loss_weight = 100
 
     # Number of training epochs
-    num_epochs = 0
+    num_epochs = 1
 
     # Learning rate
     learning_rate = 0.004
@@ -203,7 +203,7 @@ def run_epoch(
 
     i = 0
     for _ in t_iter:
-        if i == 2:
+        if i == 10:
             break
         i += 1
         if return_data:
@@ -220,10 +220,9 @@ def run_epoch(
                 [input_seqs, cont_profs], [tf_profs, tf_counts]
             )
         else:
-            losses = [-1]
-            # losses = model.test_on_batch(
-            #     [input_seqs, cont_profs], [tf_profs, tf_counts]
-            # )
+            losses = model.test_on_batch(
+                [input_seqs, cont_profs], [tf_profs, tf_counts]
+            )
         batch_losses.append(losses[0])
         
         if len(batch_losses) >= batch_nan_limit and np.all(
@@ -348,11 +347,6 @@ def train_model(
         )
         model.save(savepath)
 
-        model_json = model.to_json()
-        with open(output_dir + ("/model_arch_epoch_%d.json" % (epoch + 1)), "w") as f:
-            f.write(model_json)
-        model.save_weights(output_dir + ("/model_weights_epoch_%d.h5" % (epoch + 1)))
-
         # If validation returned enough NaNs in a row, then stop
         if np.isnan(v_epoch_loss):
             break
@@ -402,78 +396,6 @@ def train_model(
 
         profile_performance.log_performance_metrics(metrics, prefix,  _run)
         data_enq.stop()  # Stop the parallel enqueuer
-
-    hashfn = lambda x: hashlib.sha1(str(x).encode()).hexdigest()
-    print("Hash of weights:")
-    print(hashfn(model.get_weights()))
- 
-    print("Hash of inputs:")
-    print(hashfn(inputs))
-    print("Hash of profiles:")
-    print(hashfn(profiles))
-
-    print("Hash of log_pred_profs A:")
-    print(hashfn(log_pred_profs))
-    print(np.sum(log_pred_profs))
-    print("Hash of log_pred_counts A:")
-    print(hashfn(log_pred_counts))
-    print(np.sum(log_pred_counts))
-
-
-    true_profs = profiles[:, :num_tasks, :, :]
-    cont_profs = profiles[:, num_tasks:, :, :]
-    true_counts = np.sum(true_profs, axis=2)
-    
-    # Run through the model
-    logit_pred_profs_b, log_pred_counts_b = model.predict_on_batch([inputs, cont_profs])
-    
-    # Convert logit profile predictions to probabilities
-    log_pred_profs_b = profile_models.profile_logits_to_log_probs(
-        logit_pred_profs_b
-    )
-
-    print("Hash of log_pred_profs B:")
-    print(hashfn(log_pred_profs_b))
-    print(np.sum(log_pred_profs_b))
-    print("Hash of log_pred_counts B:")
-    print(hashfn(log_pred_counts_b))
-    print(np.sum(log_pred_counts_b))
-
-    print(np.allclose(log_pred_profs, log_pred_profs_b))
-    print(np.allclose(log_pred_counts, log_pred_counts_b))
-
-    print("")
-
-    savepath = os.path.join(
-        output_dir, "model_ckpt_end.h5"
-    )
-    model.save(savepath)
-
-    model_json = model.to_json()
-    with open(output_dir + "/model_arch_end.json", "w") as f:
-        f.write(model_json)
-    model.save_weights(output_dir + "/model_weights_end.h5")
-
-    custom_objects = {
-        "kb": kb,
-        "profile_loss": get_profile_loss_function(num_tasks, 1000),
-        "count_loss": get_count_loss_function(num_tasks)
-    }
-    l_model = keras.models.load_model(output_dir + "/model_ckpt_end.h5", custom_objects=custom_objects)
-
-    logit_pred_profs_c, log_pred_counts_c = l_model.predict_on_batch([inputs, cont_profs])
-    log_pred_profs_c = profile_models.profile_logits_to_log_probs(logit_pred_profs_c)
-
-    print("Hash of log_pred_profs C:")
-    print(hashfn(log_pred_profs_c))
-    print(np.sum(log_pred_profs_c))
-    print("Hash of log_pred_counts C:")
-    print(hashfn(log_pred_counts_c))
-    print(np.sum(log_pred_counts_c))
-    
-    print(np.allclose(log_pred_profs, log_pred_profs_c))
-    print(np.allclose(log_pred_counts, log_pred_counts_c))
-
 
     print("END OF TRAINING")
 

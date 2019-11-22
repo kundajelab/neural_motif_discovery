@@ -26,7 +26,7 @@ def config():
     input_depth = 4
 
     # Whether or not to perform reverse complement augmentation
-    revcomp = False
+    revcomp = True
 
     # Maximum size of jitter to the input for augmentation; set to 0 to disable
     jitter_size = 50
@@ -41,7 +41,7 @@ def config():
     peak_tiling_stride = 25
 
     # Number of workers for the data loader
-    num_workers = 1
+    num_workers = 10
 
     # Dataset seed (for shuffling)
     dataset_seed = None
