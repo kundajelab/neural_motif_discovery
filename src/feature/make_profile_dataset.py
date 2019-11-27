@@ -525,43 +525,17 @@ def main():
     global data, loader
     import os
     import tqdm
+    import json
 
-    base_path = "/users/amtseng/tfmodisco/data/interim/ENCODE/"
+    paths_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/E2F6/E2F6_training_paths.json"
+    with open(paths_json_path, "r") as f:
+        paths_json = json.load(f)
 
-    peaks_bed_files = [
-        os.path.join(base_path, ending) for ending in [
-            "SPI1/SPI1_ENCSR000BGQ_GM12878_val_peakints.bed.gz",
-            "SPI1/SPI1_ENCSR000BGW_K562_val_peakints.bed.gz",
-            "SPI1/SPI1_ENCSR000BIJ_GM12891_val_peakints.bed.gz",
-            "SPI1/SPI1_ENCSR000BUW_HL-60_val_peakints.bed.gz"
-        ]
-    ]
-            
-    profile_bigwig_files = [
-        (os.path.join(base_path, e_1), os.path.join(base_path, e_2)) \
-        for e_1, e_2 in [
-            ("SPI1/SPI1_ENCSR000BGQ_GM12878_neg.bw",
-            "SPI1/SPI1_ENCSR000BGQ_GM12878_pos.bw"),
-            ("SPI1/SPI1_ENCSR000BGW_K562_neg.bw",
-            "SPI1/SPI1_ENCSR000BGW_K562_pos.bw"),
-            ("SPI1/SPI1_ENCSR000BIJ_GM12891_neg.bw",
-            "SPI1/SPI1_ENCSR000BIJ_GM12891_pos.bw"),
-            ("SPI1/SPI1_ENCSR000BUW_HL-60_neg.bw",
-            "SPI1/SPI1_ENCSR000BUW_HL-60_pos.bw"),
-            ("SPI1/control_ENCSR000BGG_K562_neg.bw",
-            "SPI1/control_ENCSR000BGG_K562_pos.bw"),
-            ("SPI1/control_ENCSR000BGH_GM12878_neg.bw",
-            "SPI1/control_ENCSR000BGH_GM12878_pos.bw"),
-            ("SPI1/control_ENCSR000BIH_GM12891_neg.bw",
-            "SPI1/control_ENCSR000BIH_GM12891_pos.bw"),
-            ("SPI1/control_ENCSR000BVU_HL-60_neg.bw",
-            "SPI1/control_ENCSR000BVU_HL-60_pos.bw")
-        ]
-    ]
+    peaks_bed_files = paths_json["train_peak_beds"]
+    profile_bigwig_files = paths_json["prof_bigwigs"]
 
     dataset = create_data_loader(
-        peaks_bed_files, profile_bigwig_files, "SummitCenteringCoordsBatcher",
-        reference_fasta="/users/amtseng/genomes/hg38.fasta"
+        peaks_bed_files, profile_bigwig_files, "SamplingCoordsBatcher"
     )
     start_time = datetime.now()
 
@@ -572,6 +546,7 @@ def main():
 
     for i in tqdm.trange(len(enq.sequence)):
         data = next(para_batch_gen)
+        break
     end_time = datetime.now()
     print("Time: %ds" % (end_time - start_time).seconds)
 
@@ -592,12 +567,12 @@ def main():
 
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(2, 1)
-    task_ind = 3
-    ax[0].plot(prof[task_ind][0])
-    ax[0].plot(prof[task_ind][1])
+    task_ind = 0
+    ax[0].plot(prof[task_ind][:, 0])
+    ax[0].plot(prof[task_ind][:, 1])
 
-    ax[1].plot(rc_prof[task_ind][0])
-    ax[1].plot(rc_prof[task_ind][1])
+    ax[1].plot(rc_prof[task_ind][:, 0])
+    ax[1].plot(rc_prof[task_ind][:, 1])
 
     plt.show()
     

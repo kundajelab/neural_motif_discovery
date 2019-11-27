@@ -80,7 +80,7 @@ do
 
 	# 2.2) Split into training and validation
 	zcat $outdir/$tfname\_$expidcline\_all_peakints.bed.gz | awk '$1 ~ /^(chr|chr1|chr8|chr21)$/' | gzip > $outdir/$tfname\_$expidcline\_val_peakints.bed.gz
-	zcat $outdir/$tfname\_$expidcline\_all_peakints.bed.gz | awk '$1 !~ /^(chr|chr1|chr8|chr21)$/' | gzip > $outdir/$tfname\_$expidcline\_train_peakints.bed.gz
+	zcat $outdir/$tfname\_$expidcline\_all_peakints.bed.gz | awk '$1 ~ /^(chr|chr2|chr3|chr4|chr5|chr6|chr7|chr9|chr10|chr11|chr12|chr13|chr14|chr15|chr16|chr17|chr18|chr19|chr20|chr22|chrX)$/' | gzip > $outdir/$tfname\_$expidcline\_train_peakints.bed.gz
 
 	# Clean up this iteration
 	rm -rf $tempdir/*
