@@ -1,4 +1,4 @@
-import model.train_profile_model as train
+import model.train_profile_model as train_profile_model
 import numpy as np
 import random
 import os
@@ -46,31 +46,9 @@ def deep_update(parent, update):
 
 
 def run_train_command(config_updates):
-    train.train_ex.run("run_training", config_updates=config_updates)
-
-
-def launch_training(
-    hparams, base_config, train_peak_beds, val_peak_beds, prof_bigwigs
-):
-    deep_update(hparams, base_config)
-    config_updates = hparams
-
-    # Hoist up the train subdictionary to the root, since that's the command
-    # that's being run
-    train_dict = config_updates["train"]
-    del config_updates["train"]
-    deep_update(config_updates, train_dict)
-
-    # Add in the file paths; these will be filled into the command by Sacred
-    config_updates["train_peak_beds"] = train_peak_beds
-    config_updates["val_peak_beds"] = val_peak_beds
-    config_updates["prof_bigwigs"] = prof_bigwigs 
-
-    proc = multiprocessing.Process(
-        target=run_train_command, args=(config_updates,)
+    train_profile_model.train_ex.run(
+        "run_training", config_updates=config_updates
     )
-    proc.start()
-    proc.join()  # Wait until the training process stops
 
 
 @click.command()
@@ -82,26 +60,34 @@ def launch_training(
     "--num-runs", "-n", nargs=1, default=50, help="Number of runs for tuning"
 )
 @click.option(
+    "--hyperparam-json-path", "-p", nargs=1, default=None,
+    help="Path to JSON file containing specifications for how to tune hyperparameters"
+)
+@click.option(
     "--config-json-path", "-c", nargs=1, default=None,
     help="Path to a config JSON file for Sacred, may override hyperparameters"
 )
 @click.argument(
     "config_cli_tokens", nargs=-1
 )
-def main(file_specs_json_path, num_runs, config_json_path, config_cli_tokens):
-    def sample_hyperparams():
-        np.random.seed()  # Re-seed to random number
-        hparams = {
-            "train": {
-                "learning_rate": uniformly_sample_dist(-1, -4, log_scale=True),
-                "counts_loss_weight": uniformly_sample_dist(1, 4, log_scale=True)
-            },
-            "dataset": {
-                "batch_size": uniformly_sample_list([32, 64, 128])
-            }
-        }
-        return hparams
+def main(
+    file_specs_json_path, num_runs, hyperparam_json_path, config_json_path,
+    config_cli_tokens
+):
+    """
+    Launches hyperparameter tuning for a given number of runs. Below is a description of the parameters.
 
+    File specs JSON:
+        For a binary model, this JSON should have two keys: `train_bed_path` and `val_bed_path`, referring to the paths to the BED file with training coordinates/values and the BED file with validation coordinates/values, respectively. For a profile model, this JSON should have the following keys: `train_peak_beds`, which is a list of paths to BED files containing the peak and summit locations (one per task); `val_peak_beds`, a list of paths to similar BED files, but for validation instead of training; and `prof_bigwigs`, a list of paired paths, where each pair has the profile BigWig tracks for the two strands, and the first half the list is profiles to predict, and the second half is control profiles.
+    
+    Hyperparameters specs JSON:
+        An optional JSON that specifies hyperparameters to tune. The entries should either be under the `train` dictionary or `dataset` dictionary, and each entry can be a distribution sampler or list sampler. For distribution samplers, the entry should map to a pair of values, which are endpoints for random sampling. The `log_scale` argument, if specified as a third value, determines whether sampling should be on a log scale. For list samplers, the entry should map to a list of possible values to choose from. Example: {train: {learning_rate: {dist: [-3, -1, True]}, ...}, dataset: {batch_size: {list: [32, 64, 128]}, ...}}
+
+    Config JSON:
+        An optional JSON that specifies additional configuration options to override existing Sacred parameters or sampled hyperparameters; dataset parameters should be under the `dataset` key, and training parameters should be under the `train` key.
+
+    Additional commandline arguments are also accepted as additional configuration options. For example, specify `dataset.batch_size=64` or `train.num_epochs=20`. These arguments will override existing Sacred parameters, sampled hyperparameters, or anything in the config JSON.
+    """ 
     if "MODEL_DIR" not in os.environ:
         print("Warning: using default directory to store model outputs")
         print("\tTo change, set the MODEL_DIR environment variable")
@@ -113,14 +99,46 @@ def main(file_specs_json_path, num_runs, config_json_path, config_cli_tokens):
         model_dir = os.environ["MODEL_DIR"]
         print("Using %s as directory to store model outputs" % model_dir)
 
+    base_config = {}
+    # Extract the file paths specified, and put them into the base config at
+    # the top level; these will be filled into the training command by Sacred
+    with open(file_specs_json_path, "r") as f:
+        file_specs_json = json.load(f)
+    for key in file_specs_json:
+        base_config[key] = file_specs_json[key]
+
+    # Read in the hyperparameter specs dictionary
+    if hyperparam_json_path:
+        with open(hyperparam_json_path, "r") as f:
+            hyperparam_specs = json.load(f)
+    else:
+        hyperparam_specs = {}
+        
+    def sample_hyperparams(hyperparam_specs):
+        # From the hyperparameter specs dictionary, actually perform the
+        # sampling and return a similarly structured dictionary with sampled
+        # values
+        samples = {}
+        for exp_key, param_dict in hyperparam_specs.items():
+            samples[exp_key] = {}
+            for entry_key, entry_dict in param_dict.items():
+                assert ("dist" in entry_dict) + ("list" in entry_dict) == 1
+                if "dist" in entry_dict:
+                    samples[exp_key][entry_key] = \
+                        uniformly_sample_dist(*entry_dict["dist"])
+                else:
+                    samples[exp_key][entry_key] = \
+                        uniformly_sample_list(entry_dict["list"])
+        return samples
+
+    # Load in the configuration options supplied as a file
     if config_json_path:
         with open(config_json_path, "r") as f:
-            config_json = json.load(f)
-    else:
-        config_json = {}
+            config = json.load(f)
+        deep_update(base_config, config)
 
-    # Add in the configuration options supplied to commandline
-    base_config = config_json
+    # Add in the configuration options supplied to commandline, overwriting the
+    # options in the config JSON (or file paths JSON) if needed
     for token in config_cli_tokens:
         key, val = token.split("=", 1)
         try:
@@ -135,19 +153,26 @@ def main(file_specs_json_path, num_runs, config_json_path, config_cli_tokens):
             d = d[key_piece]
         d[key_pieces[-1]] = val
 
-    # Extract the file paths specified
-    with open(file_specs_json_path, "r") as f:
-        file_specs_json = json.load(f)
-    train_peak_beds = file_specs_json["train_peak_beds"]
-    val_peak_beds = file_specs_json["val_peak_beds"]
-    prof_bigwigs = file_specs_json["prof_bigwigs"]
-
     for i in range(num_runs):
-        launch_training(
-            sample_hyperparams(), base_config, train_peak_beds, val_peak_beds,
-            prof_bigwigs
+        # Sample hyperparameters and add in the base config dict (i.e. options
+        # specified by the config JSON, file specs JSON, or commandline)
+        # Anything in base config overrides sample hyperparameters
+        config_updates = sample_hyperparams(hyperparam_specs)
+        deep_update(config_updates, base_config)
+
+        # Up until this point, all training parameters/options were under the
+        # "train" subdictionary; now hoist up the subdictionary to the root,
+        # since that's the command that's being run
+        train_dict = config_updates["train"]
+        del config_updates["train"]
+        deep_update(config_updates, train_dict)
+
+        proc = multiprocessing.Process(
+            target=run_train_command, args=(config_updates,)
         )
-    
+        proc.start()
+        proc.join()  # Wait until the training process stops
+
         
 if __name__ == "__main__":
     main()   
