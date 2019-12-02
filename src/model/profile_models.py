@@ -171,11 +171,15 @@ def profile_tf_binding_predictor(
         prof_one_conv_out_arr.append(
             prof_one_conv_arr[i](task_prof_large_conv_out)  # Shape: B x O x 2
         )
-
-    prof_pred = kl.Lambda(
-        lambda x: kb.stack(x, axis=1),
-        output_shape=(num_tasks, profile_length, 2)
-    )(prof_one_conv_out_arr)  # Shape: B x O x T x 2
+    
+    if num_tasks > 1:
+        prof_pred = kl.Lambda(
+            lambda x: kb.stack(x, axis=1)
+        )(prof_one_conv_out_arr)  # Shape: B x T x O x 2
+    else:
+        prof_pred = kl.Reshape(
+            (num_tasks, profile_length, 2)
+        )(prof_one_conv_out_arr[0])  # Shape: B x 1 x O x 2
 
     # Branch B: read count prediction
     # B1. Global average pooling across the output of dilated convolutions
@@ -212,10 +216,14 @@ def profile_tf_binding_predictor(
             count_dense_arr[i](task_count_with_cont_out)  # Shape: B x 2
         )
 
-    count_pred = kl.Lambda(
-        lambda x: kb.stack(x, axis=1),
-        output_shape=(num_tasks, 2)
-    )(count_out_dense_arr)  # Shape: B x T x 2
+    if num_tasks > 1:
+        count_pred = kl.Lambda(
+            lambda x: kb.stack(x, axis=1),
+            output_shape=(num_tasks, 2)
+        )(count_out_dense_arr)  # Shape: B x T x 2
+    else:
+        count_pred = kl.Reshape((num_tasks, 2))(count_out_dense_arr[0])
+        # Shape: B x 1 x 2
 
     # Create model
     model = km.Model(
