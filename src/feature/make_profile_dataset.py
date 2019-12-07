@@ -434,8 +434,8 @@ class CoordDataset(keras.utils.data_utils.Sequence):
     
     def on_epoch_start(self):
         """
-        This should be called manually before the beginning of every epoch (i.e.
-        before the iteration begins).
+        This should be called automatically before the beginning of every epoch
+        (i.e. before the iteration begins).
         """
         self.coords_batcher.on_epoch_start()
 
@@ -444,8 +444,8 @@ class CoordDataset(keras.utils.data_utils.Sequence):
 def create_data_loader(
     peaks_bed_paths, profile_bigwig_paths, sampling_type, batch_size,
     reference_fasta, chrom_sizes, input_length, profile_length, negative_ratio,
-    peak_tiling_stride, num_workers, revcomp, jitter_size, dataset_seed,
-    shuffle=True, return_coords=False
+    peak_tiling_stride, revcomp, jitter_size, dataset_seed, shuffle=True,
+    return_coords=False
 ):
     """
     Creates an Keras Sequence object, which iterates through batches of
@@ -534,12 +534,12 @@ def main():
     peaks_bed_files = paths_json["train_peak_beds"]
     profile_bigwig_files = paths_json["prof_bigwigs"]
 
-    dataset = create_data_loader(
+    data_loader = create_data_loader(
         peaks_bed_files, profile_bigwig_files, "SamplingCoordsBatcher"
     )
     start_time = datetime.now()
 
-    enq = keras.utils.OrderedEnqueuer(dataset, use_multiprocessing=True)
+    enq = keras.utils.OrderedEnqueuer(data_loader, use_multiprocessing=True)
     workers, queue_size = 10, 20
     enq.start(workers, queue_size)
     para_batch_gen = enq.get()
