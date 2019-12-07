@@ -8,6 +8,8 @@ import model.profile_models as profile_models
 import model.profile_performance as profile_performance
 import feature.make_profile_dataset as make_profile_dataset
 import keras.optimizers
+import keras.backend
+import keras.models
 import tensorflow as tf
 
 MODEL_DIR = os.environ.get(
@@ -152,6 +154,26 @@ def create_model(
         loss_weights=[1, counts_loss_weight]
     )
     return prof_model
+
+
+def save_model(model, model_path):
+    """
+    Saves the given model to the given path.
+    """
+    model.save(savepath)
+
+
+@train_ex.capture
+def load_model(model_path, num_tasks, profile_length):
+    """
+    Imports the model saved at the given path.
+    """
+    custom_objects = {
+        "kb": keras.backend,
+        "profile_loss": get_profile_loss_function(num_tasks, profile_length),
+        "count_loss": get_count_loss_function(num_tasks)
+    }
+    return keras.models.load_model(model_path, custom_objects=custom_objects)
 
 
 @train_ex.capture
@@ -321,7 +343,7 @@ def train_model(
         savepath = os.path.join(
             output_dir, "model_ckpt_epoch_%d.h5" % (epoch + 1)
         )
-        model.save(savepath)
+        save_model(model, savepath)
 
         # If validation returned enough NaNs in a row, then stop
         if np.isnan(v_epoch_loss):
