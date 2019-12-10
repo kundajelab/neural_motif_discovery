@@ -109,7 +109,9 @@ def download_tf_files(exp_file_table, cont_file_table, tf_name, save_dir):
     Given a specific TF name, downloads its alignments and peaks using
     `download_exp_files`. Then fetches the matched control ID and downloads the
     control alignments (controls don't have called peaks). Saves results to
-    `save_dir/tf_chipseq`, and controls to `save_dir/control_chipseq`.
+    `save_dir/tf_chipseq`, and controls to `save_dir/control_chipseq`. Also
+    saves a mapping from TF ChIP seq experiment ID to the experiment ID of its
+    matched control run.
     """
     tf_exp_path = os.path.join(save_dir, "tf_chipseq")
     cont_exp_path = os.path.join(save_dir, "control_chipseq")
@@ -123,12 +125,16 @@ def download_tf_files(exp_file_table, cont_file_table, tf_name, save_dir):
 
     print("Found %d experiments: %s" % (len(tf_exp_ids), ", ".join(tf_exp_ids)))
 
+    cont_mapping = open(os.path.join(save_dir, "tf_cont_mapping.tsv"), "w")
+    cont_mapping.write("%s\tcontrol\n" % tf_name)
     for tf_exp_id in tf_exp_ids:
         print(tf_exp_id)
         download_exp_files(exp_file_table, tf_exp_id, tf_exp_path)
         cont_exp_id = fetch_experiment_control(tf_exp_id)  # Matched control ID
+        cont_mapping.write("%s\t%s\n" % (tf_exp_id, cont_exp_id))
         download_exp_files(cont_file_table, cont_exp_id, cont_exp_path)
         print("")
+    cont_mapping.close()
 
 @click.command()
 @click.option(
@@ -138,7 +144,7 @@ def download_tf_files(exp_file_table, cont_file_table, tf_name, save_dir):
     "--save-path", "-s", nargs=1, required=True, help="Path to save directory"
 )
 def main(tf_name, save_path):
-    base_path = "/users/amtseng/att_priors/data/raw/ENCODE/"
+    base_path = "/users/amtseng/tfmodisco/data/raw/ENCODE/"
     exp_table_path = os.path.join(base_path, "encode_tf_chip_experiments.tsv")
     cont_table_path = os.path.join(base_path, "encode_control_chip_experiments.tsv")
     file_table_path = os.path.join(base_path, "encode_tf_chip_files.tsv")

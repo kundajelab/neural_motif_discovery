@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import sacred
 from datetime import datetime
-import pyBigWig
+import h5py
 import feature.util as util
 import keras
 
@@ -94,24 +94,27 @@ class GenomeIntervalSampler:
 
 class CoordsToVals:
     """
-    From a single BigWig file mapping genomic coordinates to profiles, this
+    From an HDF5 file that mapps genomic coordinates to profiles, this
     creates an object that maps a list of coordinates to a NumPy array of
     profiles.
     Arguments:
-        `bigwig_path`: path to BigWig containing profile
+        `hdf5_path`: path to HDF5 containing profiles; this HDF5 must have a
+            separate dataset for each chromosome, and it is expected to return
+            profiles of shape L x S x 2, where L is the coordinate dimension,
+            S is the number of profile tracks, and 2 is for each strand
         `center_size_to_use`: for each genomic coordinate, center it and pad it
             on both sides to this length to get the final profile; if this is
             smaller than the coordinate interval given, then the interval will
             be cut to this size by centering
     """
-    def __init__(self, bigwig_path, center_size_to_use):
-        self.bigwig_path = bigwig_path
+    def __init__(self, hdf5_path, center_size_to_use):
+        self.hdf5_path = hdf5_path
         self.center_size_to_use = center_size_to_use
 
-    def _get_profile(self, chrom, start, end, bigwig_reader):
+    def _get_profile(self, chrom, start, end, hdf5_reader):
         """
         Fetches the profile for the given coordinates, with an instantiated
-        BigWig reader. Returns the profile as a NumPy array of numbers. This may
+        HDF5 reader. Returns the profile as a NumPy array of numbers. This may
         pad or cut from the center to a specified length.
         """
         if self.center_size_to_use:
@@ -119,9 +122,9 @@ class CoordsToVals:
             half_size = int(0.5 * self.center_size_to_use)
             left = center - half_size
             right = center + self.center_size_to_use - half_size
-            return np.nan_to_num(bigwig_reader.values(chrom, left, right))
+            return hdf5_reader[chrom][left:right]
         else:
-            return np.nan_to_num(bigwig_reader.values(chrom, start, end))
+            return hdf5_reader[chrom][start:end]
         
     def _get_ndarray(self, coords):
         """
@@ -129,11 +132,11 @@ class CoordsToVals:
         corresponding profile values. Note that all coordinate intervals need
         to be of the same length. 
         """
-        reader = pyBigWig.open(self.bigwig_path)
-        return np.stack([
-            self._get_profile(chrom, start, end, reader) \
-            for chrom, start, end in coords
-        ])
+        with h5py.File(self.hdf5_path, "r") as reader:
+            return np.stack([
+                self._get_profile(chrom, start, end, reader) \
+                for chrom, start, end in coords
+            ])
 
     def __call__(self, coords):
         return self._get_ndarray(coords)
@@ -362,9 +365,8 @@ class CoordDataset(keras.utils.data_utils.Sequence):
             coordinates (split into positive and negative binding)
         `coords_to_seq (CoordsToSeq)`: Maps coordinates to 1-hot encoded
             sequences
-        `coords_to_vals_list (list of CoordsToVals)`: List of instantiated
-            CoordsToVals objects, each of which maps coordinates to profiles
-            to predict
+        `coords_to_vals (CoordsToVals)`: Instantiated CoordsToVals object,
+            mapping coordinates to profiles
         `revcomp`: Whether or not to perform revcomp to the batch; this will
             double the batch size implicitly
         `return_coords`: if True, along with the 1-hot encoded sequences and
@@ -372,12 +374,12 @@ class CoordDataset(keras.utils.data_utils.Sequence):
             batch, and the peak/summit locations for the positive examples
     """
     def __init__(
-        self, coords_batcher, coords_to_seq, coords_to_vals_list, revcomp=False,
+        self, coords_batcher, coords_to_seq, coords_to_vals, revcomp=False,
         return_coords=False
     ):
         self.coords_batcher = coords_batcher
         self.coords_to_seq = coords_to_seq
-        self.coords_to_vals_list = coords_to_vals_list
+        self.coords_to_vals = coords_to_vals
         self.revcomp = revcomp
         self.return_coords = return_coords
 
@@ -387,11 +389,8 @@ class CoordDataset(keras.utils.data_utils.Sequence):
     def get_batch(self, index):
         """
         Returns a batch, which consists of an B x L x 4 NumPy array of 1-hot
-        encoded sequence, an B x T x L x 2 NumPy array of profiles, and a 1D
-        length-N NumPy array of statuses. The profile for each of the T tasks in
-        `coords_to_vals_list` is returned, in the same order as in this list,
-        and each task contains 2 tracks, for the plus and minus strand,
-        respectively.
+        encoded sequence, an B x S x L x 2 NumPy array of profiles, and a 1D
+        length-N NumPy array of statuses.
         """
         # Get batch of coordinates for this index
         if self.return_coords:
@@ -403,10 +402,10 @@ class CoordDataset(keras.utils.data_utils.Sequence):
         seqs = self.coords_to_seq(coords, revcomp=self.revcomp)
 
         # Map this batch of coordinates to the associated profiles
-        profiles = np.stack([
-            np.stack([ctv_1(coords), ctv_2(coords)], axis=2) \
-            for ctv_1, ctv_2 in self.coords_to_vals_list
-        ], axis=1)
+        profiles = self.coords_to_vals(coords)
+        # These profiles are returned as B x L x S x 2, so transpose to get
+        # B x S x L x 2
+        profiles = np.swapaxes(profiles, 1, 2)
 
         # If reverse complementation was done, double sizes of everything else
         if self.revcomp:
@@ -442,7 +441,7 @@ class CoordDataset(keras.utils.data_utils.Sequence):
 
 @dataset_ex.capture
 def create_data_loader(
-    peaks_bed_paths, profile_bigwig_paths, sampling_type, batch_size,
+    peaks_bed_paths, profile_hdf5_path, sampling_type, batch_size,
     reference_fasta, chrom_sizes, input_length, profile_length, negative_ratio,
     peak_tiling_stride, revcomp, jitter_size, dataset_seed, shuffle=True,
     return_coords=False
@@ -453,10 +452,10 @@ def create_data_loader(
     Arguments:
         `peaks_bed_paths`: a list of paths to gzipped 6-column BED files
             containing coordinates of positive-binding coordinates
-        `profile_bigwig_paths`: a list of paths to BigWigs containing reads
-            mapped to each location in the genome; each entry must be a pair of
-            BigWig paths, corresponding to the profile of the plus and minus
-            strand, respectively
+        `profile_hdf5_path`: path to HDF5 containing reads mapped to each
+            coordinate; this HDF5 must be organized by chromosome, with each
+            dataset being L x S x 2, where L is the length of the chromosome,
+            S is the number of tracks stored, and 2 is for each strand
         `sampling_type`: one of ("SamplingCoordsBatcher",
             "SummitCenteringCoordsBatcher", or "PeakTilingCoordsBatcher"), which
             corresponds to sampling positive and negative regions, taking only
@@ -472,12 +471,7 @@ def create_data_loader(
     )
 
     # Maps set of coordinates to profiles
-    coords_to_vals_list = [
-        (
-            CoordsToVals(path_1, profile_length),
-            CoordsToVals(path_2, profile_length)
-        ) for path_1, path_2 in profile_bigwig_paths
-    ]
+    coords_to_vals = CoordsToVals(profile_hdf5_path, profile_length)
 
     if sampling_type == "SamplingCoordsBatcher":
         # Randomly samples from genome
@@ -511,7 +505,7 @@ def create_data_loader(
 
     # Dataset
     dataset = CoordDataset(
-        coords_batcher, coords_to_seq, coords_to_vals_list, revcomp=revcomp,
+        coords_batcher, coords_to_seq, coords_to_vals, revcomp=revcomp,
         return_coords=return_coords
     )
 
@@ -527,15 +521,15 @@ def main():
     import tqdm
     import json
 
-    paths_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/E2F6/E2F6_training_paths.json"
+    paths_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/TEAD4/TEAD4_training_paths.json"
     with open(paths_json_path, "r") as f:
         paths_json = json.load(f)
 
     peaks_bed_files = paths_json["train_peak_beds"]
-    profile_bigwig_files = paths_json["prof_bigwigs"]
+    profile_hdf5_file = paths_json["profile_hdf5"]
 
     data_loader = create_data_loader(
-        peaks_bed_files, profile_bigwig_files, "SamplingCoordsBatcher"
+        peaks_bed_files, profile_hdf5_file, "SamplingCoordsBatcher"
     )
     start_time = datetime.now()
 

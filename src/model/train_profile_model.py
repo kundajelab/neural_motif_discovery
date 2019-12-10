@@ -390,18 +390,18 @@ def train_model(
 
 
 @train_ex.command
-def run_training(train_peak_beds, val_peak_beds, prof_bigwigs):
+def run_training(train_peak_beds, val_peak_beds, profile_hdf5):
     train_dataset = make_profile_dataset.create_data_loader(
-        train_peak_beds, prof_bigwigs, "SamplingCoordsBatcher"
+        train_peak_beds, profile_hdf5, "SamplingCoordsBatcher"
     )
     val_dataset = make_profile_dataset.create_data_loader(
-        val_peak_beds, prof_bigwigs, "SamplingCoordsBatcher"
+        val_peak_beds, profile_hdf5, "SamplingCoordsBatcher"
     )
     summit_dataset = make_profile_dataset.create_data_loader(
-        val_peak_beds, prof_bigwigs, "SummitCenteringCoordsBatcher"
+        val_peak_beds, profile_hdf5, "SummitCenteringCoordsBatcher"
     )
     peak_dataset = make_profile_dataset.create_data_loader(
-        val_peak_beds, prof_bigwigs, "PeakTilingCoordsBatcher"
+        val_peak_beds, profile_hdf5, "PeakTilingCoordsBatcher"
     )
    
     train_enq, val_enq, summit_enq, peak_enq = [
@@ -422,6 +422,6 @@ def main():
 
     train_peak_beds = paths_json["train_peak_beds"]
     val_peak_beds = paths_json["val_peak_beds"]
-    prof_bigwigs = paths_json["prof_bigwigs"]
+    profile_hdf5 = paths_json["profile_hdf5"]
 
-    run_training(train_peak_beds, val_peak_beds, prof_bigwigs)
+    run_training(train_peak_beds, val_peak_beds, profile_hdf5)
