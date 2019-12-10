@@ -1,6 +1,3 @@
-import model.train_profile_model as train_profile_model
-import feature.util as feature_util
-import feature.make_profile_dataset as make_profile_dataset
 from deeplift.dinuc_shuffle import dinuc_shuffle
 import shap
 import tensorflow as tf
@@ -158,6 +155,9 @@ def create_explainer(model, output_type="profile"):
 
 if __name__ == "__main__":
     import json
+    import model.train_profile_model as train_profile_model
+    import feature.util as feature_util
+    import feature.make_profile_dataset as make_profile_dataset
     import keras.utils
     import tqdm
     from deeplift.visualization import viz_sequence
