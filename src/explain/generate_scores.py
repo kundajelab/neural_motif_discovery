@@ -131,7 +131,7 @@ def main(
     # Extract BigWig files
     with open(files_spec_path, "r") as f:
         files_spec = json.load(f)
-    cont_prof_bigwigs = files_spec["prof_bigwigs"][num_tasks:]
+    profile_hdf5 = files_spec["profile_hdf5"]
 
     # Import model
     model = train_profile_model.load_model(
@@ -144,18 +144,9 @@ def main(
     )
 
     # Maps coordinates to control profiles
-    coords_to_vals_list = [
-        (
-            make_profile_dataset.CoordsToVals(path_1, profile_length),
-            make_profile_dataset.CoordsToVals(path_2, profile_length)
-        )
-        for path_1, path_2 in cont_prof_bigwigs
-    ]
-    def coords_to_profs(coords):
-        return np.stack([
-            np.stack([ctv_1(coords), ctv_2(coords)], axis=2)
-            for ctv_1, ctv_2 in coords_to_vals_list
-        ], axis=1)
+    coords_to_vals = make_profile_dataset.CoordsToVals(
+        profile_hdf5, profile_length
+    )
     
     # Make explainers
     prof_explainer = compute_importance.create_explainer(
@@ -177,7 +168,7 @@ def main(
         batch = subtable.values
 
         input_seqs = coords_to_seq(batch)
-        cont_profs = coords_to_profs(batch)
+        cont_profs = np.swapaxes(coords_to_vals(batch), 1, 2)[:, num_tasks:]
 
         prof_scores.append(prof_explainer(input_seqs, cont_profs))
         count_scores.append(count_explainer(input_seqs, cont_profs))
