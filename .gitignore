@@ -109,5 +109,9 @@ venv.bak/
 # Saved models
 models/
 
+# Saved motifs
+motifs/
+
 # Temporary files
 temp/
+

@@ -29,7 +29,7 @@ def config():
     revcomp = True
 
     # Maximum size of jitter to the input for augmentation; set to 0 to disable
-    jitter_size = 50
+    jitter_size = 128
 
     # Batch size; will be multiplied by two if reverse complementation is done
     batch_size = 128
