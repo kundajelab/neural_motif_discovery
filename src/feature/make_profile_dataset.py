@@ -539,20 +539,26 @@ loader = None
 @dataset_ex.automain
 def main():
     global data, loader
-    import os
     import tqdm
 
     paths_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/TEAD4/TEAD4_training_paths.json"
     with open(paths_json_path, "r") as f:
         paths_json = json.load(f)
-
     peaks_bed_files = paths_json["peak_beds"]
     profile_hdf5_file = paths_json["profile_hdf5"]
 
+    splits_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/chrom_splits.json"
+    with open(splits_json_path, "r") as f:
+        splits_json = json.load(f)
+    train_chroms, val_chroms, test_chroms = \
+        splits_json["1"]["train"], splits_json["1"]["val"], \
+        splits_json["1"]["test"]
+
     data_loader = create_data_loader(
         peaks_bed_files, profile_hdf5_file, "SamplingCoordsBatcher",
-        return_coords=True, chrom_set=["chr10", "chr8"]
+        return_coords=True, chrom_set=val_chroms
     )
+
     start_time = datetime.now()
 
     enq = keras.utils.OrderedEnqueuer(data_loader, use_multiprocessing=True)
@@ -595,4 +601,3 @@ def main():
     ax[1].plot(rc_prof[task_ind][:, 1])
 
     plt.show()
-    

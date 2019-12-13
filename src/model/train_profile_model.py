@@ -226,7 +226,7 @@ def run_epoch(
         tf_profs = profiles[:, :num_tasks, :, :]
         cont_profs = profiles[:, num_tasks:, :, :]
         tf_counts = np.sum(tf_profs, axis=2)
-        
+
         if mode == "train":
             losses = model.train_on_batch(
                 [input_seqs, cont_profs], [tf_profs, tf_counts]
@@ -306,7 +306,7 @@ def train_model(
     """
     run_num = _run._id
     output_dir = os.path.join(MODEL_DIR, str(run_num))
-    
+
     if train_seed:
         tf.set_random_seed(train_seed)
 
@@ -315,14 +315,15 @@ def train_model(
     if early_stopping:
         val_epoch_loss_hist = []
 
-    # Start the enqueuers and get the generators
-    train_enq.start(num_workers, num_workers * 2)
-    train_num_batches = len(train_enq.sequence)
-    val_enq.start(num_workers, num_workers * 2)
-    val_num_batches = len(val_enq.sequence)
-    train_gen, val_gen= train_enq.get(), val_enq.get()
-
     for epoch in range(num_epochs):
+        # Start the enqueuers and get the generators
+        train_enq.start(num_workers, num_workers * 2)
+        train_num_batches = len(train_enq.sequence)
+        val_enq.start(num_workers, num_workers * 2)
+        val_num_batches = len(val_enq.sequence)
+        train_gen, val_gen= train_enq.get(), val_enq.get()
+        val_gen = val_enq.get()
+
         t_batch_losses = run_epoch(train_gen, train_num_batches, "train", model)
         t_epoch_loss = util.nan_mean(t_batch_losses)
         print(
@@ -357,6 +358,10 @@ def train_model(
         if np.isnan(v_epoch_loss):
             break
 
+        # Stop the parallel enqueuers for training and validation
+        train_enq.stop()
+        val_enq.stop()
+
         # Check for early stopping
         if early_stopping:
             if len(val_epoch_loss_hist) < early_stop_hist_len - 1:
@@ -369,10 +374,6 @@ def train_model(
                 best_delta = np.max(np.diff(val_epoch_loss_hist))
                 if best_delta < early_stop_min_delta:
                     break  # Not improving enough
-
-    # Stop the parallel enqueuers for training and validation
-    train_enq.stop()
-    val_enq.stop()
 
     # Compute evaluation metrics and log them
     for data_enq, prefix in [
