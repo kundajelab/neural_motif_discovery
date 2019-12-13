@@ -5,6 +5,7 @@ from datetime import datetime
 import h5py
 import feature.util as util
 import keras
+import json
 
 dataset_ex = sacred.Experiment("dataset")
 
@@ -156,6 +157,8 @@ class SamplingCoordsBatcher:
         `jitter`: random amount to jitter each positive coordinate example by
         `genome_sampler`: a GenomeIntervalSampler instance, which samples
             intervals randomly from the genome
+        `chroms_keep`: if specified, only considers this set of chromosomes from
+            the coordinate BEDs
         `return_peaks`: if True, returns the peaks and summits sampled from the
             peak set as a B x 3 array
         `shuffle_before_epoch`: Whether or not to shuffle all examples before
@@ -163,8 +166,10 @@ class SamplingCoordsBatcher:
     """
     def __init__(
         self, pos_coords_beds, batch_size, neg_ratio, jitter, genome_sampler,
-        return_peaks=False, shuffle_before_epoch=False, seed=None
+        chroms_keep=None, return_peaks=False, shuffle_before_epoch=False,
+        seed=None
     ):
+        self.chroms_keep = chroms_keep
         self.batch_size = batch_size
         self.neg_ratio = neg_ratio
         self.jitter = jitter
@@ -181,6 +186,10 @@ class SamplingCoordsBatcher:
             pos_coords_table = pd.read_csv(
                 pos_coords_bed, sep="\t", header=None, compression="gzip"
             )
+            if chroms_keep:
+                pos_coords_table = \
+                    pos_coords_table[pos_coords_table[0].isin(chroms_keep)]
+
             coords = pos_coords_table.values.astype(object)
             coords = np.concatenate(
                 [coords, np.tile(i + 1, (len(coords), 1))], axis=1
@@ -259,13 +268,15 @@ class SummitCenteringCoordsBatcher(SamplingCoordsBatcher):
         `pos_coords_beds`: list of paths to gzipped BED files containing the
             sets of positive coordinates for various tasks
         `batch_size`: number of samples per batch
+        `chroms_keep`: if specified, only considers this set of chromosomes from
+            the coordinate BEDs
         `return_peaks`: if True, returns the peaks and summits sampled from the
             peak set as a B x 3 array
         `shuffle_before_epoch`: Whether or not to shuffle all examples before
             each epoch
     """
     def __init__(
-        self, pos_coords_beds, batch_size, return_peaks=False,
+        self, pos_coords_beds, batch_size, chroms_keep=None, return_peaks=False,
         shuffle_before_epoch=False, seed=None
     ):
         # Same as a normal SamplingCoordsBatcher, but with no negatives and no
@@ -277,6 +288,7 @@ class SummitCenteringCoordsBatcher(SamplingCoordsBatcher):
             neg_ratio=0,
             jitter=0,
             genome_sampler=None,
+            chroms_keep=chroms_keep,
             return_peaks=return_peaks,
             shuffle_before_epoch=shuffle_before_epoch,
             seed=seed
@@ -292,18 +304,21 @@ class PeakTilingCoordsBatcher(SamplingCoordsBatcher):
             sets of positive coordinates for various tasks
         `stride`: amount of stride when tiling the coordinates
         `batch_size`: number of samples per batch
+        `chroms_keep`: if specified, only considers this set of chromosomes from
+            the coordinate BEDs
         `return_peaks`: if True, returns the peaks and summits sampled from the
             peak set as a B x 3 array
         `shuffle_before_epoch`: Whether or not to shuffle all examples before
             each epoch
     """
     def __init__(
-        self, pos_coords_beds, stride, batch_size, return_peaks=False,
-        shuffle_before_epoch=False, seed=None
+        self, pos_coords_beds, stride, batch_size, chroms_keep=None,
+        return_peaks=False, shuffle_before_epoch=False, seed=None
     ):
         self.stride = stride
         self.batch_size = batch_size
         self.jitter = 0
+        self.chroms_keep = chroms_keep
         self.return_peaks = return_peaks
         self.shuffle_before_epoch = shuffle_before_epoch
 
@@ -316,6 +331,9 @@ class PeakTilingCoordsBatcher(SamplingCoordsBatcher):
                 pos_coords_bed, sep="\t", header=None, compression="gzip",
                 usecols=[0, 3, 4, 5]
             )
+            if chroms_keep:
+                pos_coords_table = \
+                    pos_coords_table[pos_coords_table[0].isin(chroms_keep)]
             coords = pos_coords_table.values.astype(object)
             coords = np.concatenate(
                 [coords, np.tile(i + 1, (len(coords), 1))], axis=1
@@ -443,8 +461,8 @@ class CoordDataset(keras.utils.data_utils.Sequence):
 def create_data_loader(
     peaks_bed_paths, profile_hdf5_path, sampling_type, batch_size,
     reference_fasta, chrom_sizes, input_length, profile_length, negative_ratio,
-    peak_tiling_stride, revcomp, jitter_size, dataset_seed, shuffle=True,
-    return_coords=False
+    peak_tiling_stride, revcomp, jitter_size, dataset_seed, chrom_set=None,
+    shuffle=True, return_coords=False
 ):
     """
     Creates an Keras Sequence object, which iterates through batches of
@@ -461,6 +479,9 @@ def create_data_loader(
             corresponds to sampling positive and negative regions, taking only
             positive regions centered around summits, and taking only positive
             regions tiled across peaks
+        `chrom_set`: a list of chromosomes to restrict to for the positives and
+            sampled negatives; defaults to all coordinates in the given BEDs and
+            sampling over the entire genome
         `shuffle`: if specified, shuffle the coordinates before each epoch
         `return_coords`: if specified, also return the underlying coordinates
             and peak data along with the profiles in each batch
@@ -476,26 +497,27 @@ def create_data_loader(
     if sampling_type == "SamplingCoordsBatcher":
         # Randomly samples from genome
         genome_sampler = GenomeIntervalSampler(
-            chrom_sizes, input_length, seed=dataset_seed
+            chrom_sizes, input_length, chroms_keep=chrom_set, seed=dataset_seed,
         )
         # Yields batches of positive and negative coordinates
         coords_batcher = SamplingCoordsBatcher(
             peaks_bed_paths, batch_size, negative_ratio, jitter_size,
-            genome_sampler, return_peaks=return_coords,
+            genome_sampler, chroms_keep=chrom_set, return_peaks=return_coords,
             shuffle_before_epoch=shuffle, seed=dataset_seed
         )
     elif sampling_type == "SummitCenteringCoordsBatcher":
         # Yields batches of positive coordinates, centered at summits
         coords_batcher = SummitCenteringCoordsBatcher(
-            peaks_bed_paths, batch_size, return_peaks=return_coords,
-            shuffle_before_epoch=shuffle, seed=dataset_seed
+            peaks_bed_paths, batch_size, chroms_keep=chrom_set,
+            return_peaks=return_coords, shuffle_before_epoch=shuffle,
+            seed=dataset_seed
         )
     else:
         # Yields batches of positive coordinates, tiled across peaks
         coords_batcher = PeakTilingCoordsBatcher(
             peaks_bed_paths, peak_tiling_stride, batch_size,
-            return_peaks=return_coords, shuffle_before_epoch=shuffle,
-            seed=dataset_seed
+            chroms_keep=chrom_set, return_peaks=return_coords,
+            shuffle_before_epoch=shuffle, seed=dataset_seed
         )
 
     # Maps set of coordinates to 1-hot encoding, padded
@@ -519,17 +541,17 @@ def main():
     global data, loader
     import os
     import tqdm
-    import json
 
     paths_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/TEAD4/TEAD4_training_paths.json"
     with open(paths_json_path, "r") as f:
         paths_json = json.load(f)
 
-    peaks_bed_files = paths_json["train_peak_beds"]
+    peaks_bed_files = paths_json["peak_beds"]
     profile_hdf5_file = paths_json["profile_hdf5"]
 
     data_loader = create_data_loader(
-        peaks_bed_files, profile_hdf5_file, "SamplingCoordsBatcher"
+        peaks_bed_files, profile_hdf5_file, "SamplingCoordsBatcher",
+        return_coords=True, chrom_set=["chr10", "chr8"]
     )
     start_time = datetime.now()
 
@@ -549,15 +571,19 @@ def main():
     k = 2
     rc_k = int(len(data[0]) / 2) + k
 
-    seqs, profiles, statuses = data
+    seqs, profiles, statuses, coords, peaks = data
     
-    seq, prof, status = seqs[k], profiles[k], statuses[k]
-    rc_seq, rc_prof, rc_status = seqs[rc_k], profiles[rc_k], statuses[rc_k]
+    seq, prof, status, coord, peak = \
+        seqs[k], profiles[k], statuses[k], coords[k], peaks[k]
+    rc_seq, rc_prof, rc_status, rc_coord, rc_peak = \
+        seqs[rc_k], profiles[rc_k], statuses[rc_k], coords[rc_k], peaks[rc_k]
     
     print(util.one_hot_to_seq(seq))
     print(util.one_hot_to_seq(rc_seq))
 
     print(status, rc_status)
+    print(coord, rc_coord)
+    print(peak, rc_peak)
 
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(2, 1)

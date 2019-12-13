@@ -160,7 +160,7 @@ def save_model(model, model_path):
     """
     Saves the given model to the given path.
     """
-    model.save(savepath)
+    model.save(model_path)
 
 
 @train_ex.capture
@@ -218,6 +218,10 @@ def run_epoch(
 
     for _ in t_iter:
         input_seqs, profiles, statuses = next(data_gen)
+        assert profiles.shape[1:] == (2 * num_tasks, profile_length, 2), \
+            "Expected profiles of shape (N, %d, %d, 2); is num_tasks set correctly?" % (
+                2 * num_tasks, profile_length
+            )
 
         tf_profs = profiles[:, :num_tasks, :, :]
         cont_profs = profiles[:, num_tasks:, :, :]
@@ -277,8 +281,9 @@ def run_epoch(
 
 @train_ex.capture
 def train_model(
-    train_enq, val_enq, summit_enq, peak_enq, num_workers, num_epochs,
-    early_stopping, early_stop_hist_len, early_stop_min_delta, train_seed, _run
+    train_enq, val_enq, test_summit_enq, test_peak_enq, test_genome_enq,
+    num_workers, num_epochs, early_stopping, early_stop_hist_len,
+    early_stop_min_delta, train_seed, _run
 ):
     """
     Trains the network for the given training and validation data.
@@ -289,12 +294,15 @@ def train_model(
         `val_enq` (OrderedEnqueuer's generator): a data loader for the
             validation data, each batch giving the 1-hot encoded sequence,
             profiles, and statuses
-        `summit_enq` (OrderedEnqueuer's generator): a data loader for the
-            validation data, with coordinates centered at summits, each batch
-            giving the 1-hot encoded sequence, profiles, and statuses
-        `peak_enq` (OrderedEnqueuer's generator): a data loader for the
-            validation data, with coordinates tiled across peaks, each batch
-            giving the 1-hot encoded sequence, profiles, and statuses
+        `test_summit_enq` (OrderedEnqueuer's generator): a data loader for the
+            test data, with coordinates centered at summits, each batch giving
+            the 1-hot encoded sequence, profiles, and statuses
+        `test_peak_enq` (OrderedEnqueuer's generator): a data loader for the
+            test data, with coordinates tiled across peaks, each batch giving
+            the 1-hot encoded sequence, profiles, and statuses
+        `test_genome_enq` (OrderedEnqueuer's generator): a data loader for the
+            test data, with summit-centered coordinates with sampled negatives,
+            each batch giving the 1-hot encoded sequence, profiles, and statuses
     """
     run_num = _run._id
     output_dir = os.path.join(MODEL_DIR, str(run_num))
@@ -368,7 +376,7 @@ def train_model(
 
     # Compute evaluation metrics and log them
     for data_enq, prefix in [
-        (summit_enq, "summit"), # (peak_enq, "peak"), (val_enq, "genomewide")
+        (test_summit_enq, "summit"), # (test_peak_enq, "peak"), (test_val_enq, "genomewide")
     ]:
         print("Computing validation metrics, %s:" % prefix)
         data_enq.start(num_workers, num_workers * 2)
@@ -390,27 +398,37 @@ def train_model(
 
 
 @train_ex.command
-def run_training(train_peak_beds, val_peak_beds, profile_hdf5):
+def run_training(
+    peak_beds, profile_hdf5, train_chroms, val_chroms, test_chroms
+):
     train_dataset = make_profile_dataset.create_data_loader(
-        train_peak_beds, profile_hdf5, "SamplingCoordsBatcher"
+        peak_beds, profile_hdf5, "SamplingCoordsBatcher", chrom_set=train_chroms
     )
     val_dataset = make_profile_dataset.create_data_loader(
-        val_peak_beds, profile_hdf5, "SamplingCoordsBatcher"
+        peak_beds, profile_hdf5, "SamplingCoordsBatcher", chrom_set=val_chroms
     )
-    summit_dataset = make_profile_dataset.create_data_loader(
-        val_peak_beds, profile_hdf5, "SummitCenteringCoordsBatcher"
+    test_summit_dataset = make_profile_dataset.create_data_loader(
+        peak_beds, profile_hdf5, "SummitCenteringCoordsBatcher",
+        chrom_set=test_chroms
     )
-    peak_dataset = make_profile_dataset.create_data_loader(
-        val_peak_beds, profile_hdf5, "PeakTilingCoordsBatcher"
+    test_peak_dataset = make_profile_dataset.create_data_loader(
+        peak_beds, profile_hdf5, "PeakTilingCoordsBatcher",
+        chrom_set=test_chroms
+    )
+    test_genome_dataset = make_profile_dataset.create_data_loader(
+        peak_beds, profile_hdf5, "SamplingCoordsBatcher", chrom_set=test_chroms
     )
    
-    train_enq, val_enq, summit_enq, peak_enq = [
+    train_enq, val_enq, test_summit_enq, test_peak_enq, test_genome_enq = [
         keras.utils.OrderedEnqueuer(dataset, use_multiprocessing=True)
         for dataset in [
-            train_dataset, val_dataset, summit_dataset, peak_dataset
+            train_dataset, val_dataset, test_summit_dataset, test_peak_dataset,
+            test_genome_dataset
         ]
     ]
-    train_model(train_enq, val_enq, summit_enq, peak_enq)
+    train_model(
+        train_enq, val_enq, test_summit_enq, test_peak_enq, test_genome_enq
+    )
 
 
 @train_ex.automain
@@ -420,8 +438,15 @@ def main():
     with open(paths_json_path, "r") as f:
         paths_json = json.load(f)
 
-    train_peak_beds = paths_json["train_peak_beds"]
-    val_peak_beds = paths_json["val_peak_beds"]
+    splits_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/chrom_splits.json"
+    with open(splits_json_path, "r") as f:
+        splits_json = json.load(f)
+
+    peak_beds = paths_json["peak_beds"]
     profile_hdf5 = paths_json["profile_hdf5"]
 
-    run_training(train_peak_beds, val_peak_beds, profile_hdf5)
+    train_chroms, val_chroms, test_chroms = \
+        splits_json["1"]["train"], splits_json["1"]["val"], \
+        splits_json["1"]["test"]
+
+    run_training(peak_beds, profile_hdf5, train_chroms, val_chroms, test_chroms)
