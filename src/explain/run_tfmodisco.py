@@ -1,5 +1,6 @@
 import feature.util as feature_util
 import h5py
+import os
 import numpy as np
 import tqdm
 from collections import OrderedDict
@@ -68,7 +69,7 @@ def prepare_tfm_inputs(
     
     # Compute actual scores
     act_scores = hyp_scores * input_seqs
-    
+
     # Put scores into OrderedDict
     task_to_hyp_scores, task_to_act_scores = OrderedDict(), OrderedDict()
     task_to_hyp_scores["task0"] = hyp_scores
@@ -106,6 +107,11 @@ def main(
         shap_score_hdf5_path, reference_fasta, padded_size,
         score_type=score_type
     )
+
+    # Construct workflow pipeline
+    null_per_pos_scores = modisco.coordproducers.LaplaceNullDist(
+        num_to_samp=5000
+    )
     tfm_workflow = modisco.tfmodisco_workflow.workflow.TfModiscoWorkflow(
     	sliding_window_size=15,
     	flank_size=5,
@@ -119,13 +125,20 @@ def main(
     	    final_min_cluster_size=60
     	)
     )
+
+    # Move to output directory to do work
+    cwd = os.getcwd()
+    os.chdir(os.path.dirname(outfile))
+
     tfm_results = tfm_workflow(
         task_names=list(task_to_act_scores.keys()),
         contrib_scores=task_to_act_scores,
         hypothetical_contribs=task_to_hyp_scores,
-        one_hot=input_seqs
+        one_hot=input_seqs,
+        null_per_pos_scores = null_per_pos_scores
     )
-   
+
+    os.chdir(cwd)
     print("Saving results to %s" % outfile)
     with h5py.File(outfile, "w") as f:
         tfm_results.save_hdf5(f)
