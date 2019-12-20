@@ -5,6 +5,14 @@ import numpy as np
 import tqdm
 import click
 
+def ask_to_continue():
+    resp = input("Continue? [y|N]: ")
+    if resp.lower() in ("y", "yes"):
+        return
+    else:
+        raise Exception("Aborted")
+
+
 def fetch_bigwig_paths(base_path, tf_name, tf_cont_mapping_path):
     """
     Reads in the set of BigWig paths corresponding to TF-ChIPseq profiles and
@@ -57,48 +65,56 @@ def fetch_bigwig_paths(base_path, tf_name, tf_cont_mapping_path):
             (cond, expid_cline, strand)
         bigwig_dict[cond][expid_cline][strand] = os.path.join(base_path, name)
 
-    # Verify that the expected conditions, experiments/cell lines, and strands
-    # are all present
-    assert sorted(bigwig_dict.keys()) == sorted([tf_name, "control"]), \
-        "Did not find tracks for both %s and control" % tf_name
-
-    tf_clines = sorted([pair[1] for pair in bigwig_dict[tf_name].keys()])
-    cont_clines = sorted([pair[1] for pair in bigwig_dict["control"].keys()])
-    assert tf_clines == cont_clines, \
-        "Did not have same cell lines for %s and control" %  tf_name
-   
-    for cond, cond_dict in bigwig_dict.items():
-        for expid_cline, expid_cline_dict in cond_dict.items():
-            assert sorted(expid_cline_dict.keys()) == ["neg", "pos"], \
-                "Did not find both strands for %s, %s" % (cond, expid_cline)
-
-    # Reformat dictionary into list of pairs
-    paths = []
-    tf_expids = []
+    # Get list of TF-ChIPseq experiment IDs/cell lines with matched controls
+    tf_expids, tf_expid_clines = [], []
     for expid_cline in sorted(bigwig_dict[tf_name].keys(), key=lambda p: p[0]):
         expid = expid_cline[0]
-        assert expid in tf_cont_mapping.keys(), \
-            "Did not find %s as TF-ChIPseq experiment in mapping" % expid
-        strand_dict = bigwig_dict[tf_name][expid_cline]
-        paths.append([strand_dict["neg"], strand_dict["pos"]])
+        if expid not in tf_cont_mapping.keys():
+            print(
+                "Did not matching control for TF-ChIPseq experiment %s" % \
+                expid_cline
+            )
+            ask_to_continue()
+            continue
         tf_expids.append(expid)
+        tf_expid_clines.append(expid_cline)
+
     assert len(tf_expids) == len(set(tf_expids)), \
         "Found duplicate TF-ChIPseq experiment IDs"
-    for tf_expid in tf_expids:
-        try:
-            cont_expid = tf_cont_mapping[tf_expid]
-        except KeyError:
-            raise ValueError("Did not find mapped control for %s" % tf_expid)
-        expid_cline = [
+
+    # Generate list of paired paths
+    tf_paths, cont_paths = [], []
+    for i in range(len(tf_expids)):
+        tf_expid, tf_expid_cline = tf_expids[i], tf_expid_clines[i]
+        cont_expid = tf_cont_mapping[tf_expid]
+        cont_expid_cline = [
             key for key in bigwig_dict["control"] if key[0] == cont_expid
         ]
-        assert len(expid_cline) == 1, \
-            "Did not find exactly 1 experiment for mapped control %s" % \
-            cont_expid
-        strand_dict = bigwig_dict["control"][expid_cline[0]]
-        paths.append([strand_dict["neg"], strand_dict["pos"]])
+        if len(cont_expid_cline) != 1:
+            print(
+                "Did not find exactly 1 experiment for mapped control %s" % \
+                cont_expid
+            )
+            ask_to_continue()
+            continue
+        tf_strand_dict = bigwig_dict[tf_name][tf_expid_cline]
+        tf_paths.append([tf_strand_dict["neg"], tf_strand_dict["pos"]])
+        cont_strand_dict = bigwig_dict["control"][cont_expid_cline[0]]
+        cont_paths.append([cont_strand_dict["neg"], cont_strand_dict["pos"]])
 
-    return paths
+    print("Found the following experiments/cell lines:")
+    for i in range(len(tf_paths)):
+        print("%s\t%s" % (
+            os.path.basename(tf_paths[i][0]), os.path.basename(cont_paths[i][0])
+        ))
+        print("%s\t%s" % (
+            os.path.basename(tf_paths[i][1]), os.path.basename(cont_paths[i][1])
+        ))
+        print()
+    print("Total pairs: %d" % len(tf_paths))
+    ask_to_continue()
+
+    return tf_paths + cont_paths
 
 
 def create_hdf5(
@@ -206,6 +222,7 @@ def main(
     if not out_path:
         out_path = \
             "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/%s/%s_profiles.h5" % (tf_name, tf_name)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
     bigwig_paths = fetch_bigwig_paths(base_path, tf_name, tf_cont_mapping_path)
     print("Found %d matched experiments/tasks" % (len(bigwig_paths) // 2))
