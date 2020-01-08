@@ -99,6 +99,10 @@ def filter_overlapping_peaks(peaks_table, overlap_max=10):
     type=int
 )
 @click.option(
+    "--task-index", "-i", required=True, type=int,
+    help="(0-based) Index of the task to compute importance scores for"
+)
+@click.option(
     "--padded-size", "-s", default=400,
     help="Size of input sequences to compute explanations for"
 )
@@ -116,7 +120,8 @@ def filter_overlapping_peaks(peaks_table, overlap_max=10):
 @click.argument("peaks_bed_paths", nargs=-1)
 def main(
     model_path, files_spec_path, reference_fasta, input_length, profile_length,
-    num_tasks, padded_size, overlap_max, gzipped, outfile, peaks_bed_paths
+    num_tasks, task_index, padded_size, overlap_max, gzipped, outfile,
+    peaks_bed_paths
 ):
     """
     Takes a set of peak coordinates and a trained model, and computes profile
@@ -150,10 +155,10 @@ def main(
     
     # Make explainers
     prof_explainer = compute_importance.create_explainer(
-        model, output_type="profile"
+        model, task_index=task_index, output_type="profile"
     )
     count_explainer = compute_importance.create_explainer(
-        model, output_type="count"
+        model, task_index=task_index, output_type="count"
     )
 
     # Compute importance scores

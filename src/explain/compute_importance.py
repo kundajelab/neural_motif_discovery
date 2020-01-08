@@ -88,12 +88,15 @@ def combine_mult_and_diffref(mult, orig_inp, bg_data):
     return [input_seq_hyp_scores, cont_profs_hyp_scores]
 
 
-def create_explainer(model, output_type="profile"):
+def create_explainer(model, task_index=None, output_type="profile"):
     """
     Given a trained Keras model, creates a Shap DeepExplainer that returns
     hypothetical scores for the input sequence.
     Arguments:
         `model`: a model from `profile_model.profile_tf_binding_predictor`
+        `task_index`: a specific task index (0-indexed) to perform explanations
+            from (i.e. explanations will only be from the specified outputs); by
+            default explains all tasks
         `output_type`: if "profile", utilizes the profile output to compute the
             importance scores; if "count", utilizes the counts output; in either
             case, the importance scores are for the ouputs summed across strands
@@ -120,7 +123,9 @@ def create_explainer(model, output_type="profile"):
         logits_stopgrad = tf.stop_gradient(logits)
         probs = tf.nn.softmax(logits_stopgrad, axis=2)
 
-        logits_weighted = logits * probs
+        logits_weighted = logits * probs  # Shape: B x T x O x 2
+        if task_index:
+            logits_weighted = logits_weighted[:, task_index : task_index + 1]
         prof_sum = tf.reduce_sum(logits_weighted, axis=(1, 2, 3))
         explainer = shap.DeepExplainer(
             model=(model.input, prof_sum),
@@ -129,6 +134,8 @@ def create_explainer(model, output_type="profile"):
         )
     else:
         count_output = model.output[1]  # Shape: B x T x 2
+        if task_index:
+            count_output = count_output[:, task_index : task_index + 1]
         count_sum = tf.reduce_sum(count_output, axis=(1, 2))
         explainer = shap.DeepExplainer(
             model=(model.input, count_sum),
