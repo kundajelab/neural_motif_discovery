@@ -1,8 +1,8 @@
 show_help() {
 	cat << EOF
 Usage: ${0##*/} [OPTIONS] IN_FASTA OUT_DIR
-Runs MEME on the input Fasta sequences in `IN_FASTA` and outputs results in
-`OUT_DIR`.
+Runs MEME on the input Fasta sequences in 'IN_FASTA' and outputs results in
+'OUT_DIR'.
 MEME 5.0.1 needs to be loaded
 EOF
 }

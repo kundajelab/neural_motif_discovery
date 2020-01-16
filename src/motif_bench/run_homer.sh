@@ -1,7 +1,8 @@
 show_help() {
 	cat << EOF
-Usage: ${0##*/} [OPTIONS] IN_FASTA OUT_DIR
-Runs HOMER on the input BED intervals `IN_BED` and outputs results in `OUT_DIR`.
+Usage: ${0##*/} [OPTIONS] IN_FILE OUT_DIR
+Runs HOMER on the input 'IN_FILE' and outputs results in 'OUT_DIR'.
+'IN_FILE' may be a Fasta, a BED, or gzipped BED.
 HOMER needs to be loaded.
 Assumes reference genome of hg38.
 EOF
@@ -42,14 +43,16 @@ then
 	genome=hg38
 fi
 
-inbed=$1
+infile=$1
 outdir=$2
 
 mkdir -p $outdir
-
-if [ ${inbed: -3} == ".gz" ]
+if [ ${infile: -6} == ".fasta" ]
 then
-	findMotifsGenome.pl <(zcat $inbed) $genome $outdir -len 12 -size 200 -p 4
+	findMotifs.pl $infile fasta $outdir -len 12 -p 4
+elif [ ${infile: -3} == ".gz" ]
+then
+	findMotifsGenome.pl <(zcat $infile) $genome $outdir -len 12 -size 200 -p 4
 else
-	findMotifsGenome.pl $inbed $genome $outdir -len 12 -size 200 -p 4
+	findMotifsGenome.pl $infile $genome $outdir -len 12 -size 200 -p 4
 fi

@@ -9,8 +9,8 @@ import shutil
 import json
 import numpy as np
 
-tf_name = "SPI1"
-num_tasks = 4
+tf_name = "TEAD4"
+num_tasks = 1
 
 base_dir = "/users/amtseng/tfmodisco/"
 motif_dir = os.path.join(base_dir, "motifs/%s/" % tf_name)
@@ -75,56 +75,56 @@ sherlock_best_model_path = os.path.join(
 
 
 # 3) For each task, write a job script (and then copy the job scripts over)
-job_template = """#!/bin/bash
-#SBATCH -J {job_name}
-#SBATCH -p rondror,akundaje,owners                                              
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=1
-#SBATCH --nodes=1
-#SBATCH --gpus=1
-#SBATCH --mem-per-cpu=16G
-#SBATCH -t 24:00:00
-#SBATCH -o {job_dir}/{job_name}.out
-#SBATCH -e {job_dir}/{job_name}.err
-
-source /home/users/amtseng/.bashrc
-conda activate tfmodisco
-
-cd {src_dir}
-
-python -m explain.generate_scores -m {model_path} -f {training_paths_json} -n {num_tasks} -i {task_index} -z -o {out_file} {peak_file}
-"""
-
-sherlock_training_paths_json = os.path.join(
-    sherlock_data_dir, "config/{0}/{0}_training_paths.json".format(tf_name)
-)
-os.makedirs(sherlock_job_dir, exist_ok=True)
-
-peak_dir = os.path.join(sherlock_data_dir, "labels/{0}".format(tf_name))
-peak_files = [item for item in os.listdir(peak_dir) if item.endswith(".bed.gz")]
-# The task indices corresponded to the peak files, sorted alphabetically:
-peak_files = sorted(peak_files)
-for task_index, peak_file in enumerate(peak_files):
-    peak_path = os.path.join(peak_dir, peak_file)
-    task_name = "_".join(peak_file.split("_")[:3])
-    job_name = task_name + "_score"
-
-    out_file = os.path.join(sherlock_motif_dir, task_name + "_scores.h5")
-
-    job_content = job_template.format(
-        job_name=job_name,
-        job_dir=sherlock_job_dir,
-        src_dir=os.path.join(sherlock_base_dir, "src"),
-        model_path=sherlock_best_model_path,
-        training_paths_json=sherlock_training_paths_json,
-        num_tasks=num_tasks,
-        task_index=task_index,
-        out_file=out_file,
-        peak_file=peak_path
-    )
-    job_path = os.path.join(sherlock_job_dir, job_name + ".sbatch")
-    with open(job_path, "w") as f:
-        f.write(job_content)
+# job_template = """#!/bin/bash
+# #SBATCH -J {job_name}
+# #SBATCH -p rondror,akundaje,owners                                              
+# #SBATCH --ntasks-per-node=1
+# #SBATCH --cpus-per-task=1
+# #SBATCH --nodes=1
+# #SBATCH --gpus=1
+# #SBATCH --mem-per-cpu=16G
+# #SBATCH -t 24:00:00
+# #SBATCH -o {job_dir}/{job_name}.out
+# #SBATCH -e {job_dir}/{job_name}.err
+# 
+# source /home/users/amtseng/.bashrc
+# conda activate tfmodisco
+# 
+# cd {src_dir}
+# 
+# python -m explain.generate_scores -m {model_path} -f {training_paths_json} -n {num_tasks} -i {task_index} -z -o {out_file} {peak_file}
+# """
+# 
+# sherlock_training_paths_json = os.path.join(
+#     sherlock_data_dir, "config/{0}/{0}_training_paths.json".format(tf_name)
+# )
+# os.makedirs(sherlock_job_dir, exist_ok=True)
+# 
+# peak_dir = os.path.join(sherlock_data_dir, "labels/{0}".format(tf_name))
+# peak_files = [item for item in os.listdir(peak_dir) if item.endswith(".bed.gz")]
+# # The task indices corresponded to the peak files, sorted alphabetically:
+# peak_files = sorted(peak_files)
+# for task_index, peak_file in enumerate(peak_files):
+#     peak_path = os.path.join(peak_dir, peak_file)
+#     task_name = "_".join(peak_file.split("_")[:3])
+#     job_name = task_name + "_score"
+# 
+#     out_file = os.path.join(sherlock_motif_dir, task_name + "_scores.h5")
+# 
+#     job_content = job_template.format(
+#         job_name=job_name,
+#         job_dir=sherlock_job_dir,
+#         src_dir=os.path.join(sherlock_base_dir, "src"),
+#         model_path=sherlock_best_model_path,
+#         training_paths_json=sherlock_training_paths_json,
+#         num_tasks=num_tasks,
+#         task_index=task_index,
+#         out_file=out_file,
+#         peak_file=peak_path
+#     )
+#     job_path = os.path.join(sherlock_job_dir, job_name + ".sbatch")
+#     with open(job_path, "w") as f:
+#         f.write(job_content)
 
 
 # 4) Print out the commands needed if the jobs are to be run directly on the lab
