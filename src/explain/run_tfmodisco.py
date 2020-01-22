@@ -19,7 +19,8 @@ def prepare_tfm_inputs(
             `generate_scores.py`
         `reference_fasta`: path to reference fasta for importing sequences
         `padded_size`: size of peaks used for generating importance scores, and
-            the size of sequence to use for TF-MoDISco
+            the size of sequence to use for TF-MoDISco; here, this will just
+            cut off everything outside this size
         `score_type`: one of "profile" or "count", determines which set of
             importance scores to return
     Returns the hypothetical importance scores, actual importance scores, and
