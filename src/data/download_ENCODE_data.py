@@ -51,6 +51,10 @@ def download_file(download_url, save_path):
     urllib.request.urlretrieve(url, save_path)
 
 
+class ExperimentIDNotFoundInTable(Exception):
+    pass
+
+
 def download_exp_files(exp_file_table, exp_id, save_dir):
     """
     Downloads some data for the given experiment. Specifically, this downloads
@@ -75,7 +79,10 @@ def download_exp_files(exp_file_table, exp_id, save_dir):
     }
 
     exp_table = exp_file_table[exp_file_table["Experiment"] == exp_id]
-    cell_line = exp_table["Biosample term name"].values[0]
+    try:
+        cell_line = exp_table["Biosample term name"].values[0]
+    except IndexError:
+        raise ExperimentIDNotFoundInTable
     # For each kind of output type and file format...
     for (out_type, file_type), out_group in exp_table.groupby(
         ["Output type", "File type"]
@@ -132,7 +139,11 @@ def download_tf_files(exp_file_table, cont_file_table, tf_name, save_dir):
         download_exp_files(exp_file_table, tf_exp_id, tf_exp_path)
         cont_exp_id = fetch_experiment_control(tf_exp_id)  # Matched control ID
         cont_mapping.write("%s\t%s\n" % (tf_exp_id, cont_exp_id))
-        download_exp_files(cont_file_table, cont_exp_id, cont_exp_path)
+        try:
+            download_exp_files(cont_file_table, cont_exp_id, cont_exp_path)
+        except ExperimentIDNotFoundInTable:
+            print("\tCould not find %s in control table; trying TF table" % cont_exp_id)
+            download_exp_files(exp_file_table, cont_exp_id, cont_exp_path)
         print("")
     cont_mapping.close()
 
