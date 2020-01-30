@@ -83,7 +83,6 @@ do
 done
 
 # Iterate through the control ChIPseq experiments/cell lines
-# Focus on those with an alignment, peaks, and a control
 for expidcline in `printf "%s\n" "${matchedconts[@]}" | sort -u`  # Uniquify set of controls
 do
 	echo "Processing control ChIPseq experiment $expidcline ..."
