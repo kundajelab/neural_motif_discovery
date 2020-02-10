@@ -193,18 +193,30 @@ def predict_all_peaks(
         pred_group = fold_group.create_group("predictions")
         perf_group = fold_group.create_group("performance")
         coord_group.create_dataset(
-            "coords_chrom", data=coords[:, 0].astype("S")
+            "coords_chrom", data=coords[:, 0].astype("S"), compression="gzip"
         )
         coord_group.create_dataset(
-            "coords_start", data=coords[:, 1].astype(int)
+            "coords_start", data=coords[:, 1].astype(int), compression="gzip"
         )
-        coord_group.create_dataset("coords_end", data=coords[:, 2].astype(int))
-        pred_group.create_dataset("log_pred_profs", data=log_pred_profs)
-        pred_group.create_dataset("log_pred_counts", data=log_pred_counts)
-        pred_group.create_dataset("true_profs", data=true_profs)
-        pred_group.create_dataset("true_counts", data=true_counts)
+        coord_group.create_dataset(
+            "coords_end", data=coords[:, 2].astype(int), compression="gzip"
+        )
+        pred_group.create_dataset(
+            "log_pred_profs", data=log_pred_profs, compression="gzip"
+        )
+        pred_group.create_dataset(
+            "log_pred_counts", data=log_pred_counts, compression="gzip"
+        )
+        pred_group.create_dataset(
+            "true_profs", data=true_profs, compression="gzip"
+        )
+        pred_group.create_dataset(
+            "true_counts", data=true_counts, compression="gzip"
+        )
         for key in perf_dict:
-            perf_group.create_dataset(key, data=perf_dict[key])
+            perf_group.create_dataset(
+                key, data=perf_dict[key], compression="gzip"
+            )
 
     h5_file.close()
 

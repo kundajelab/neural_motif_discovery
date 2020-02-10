@@ -117,11 +117,11 @@ def compute_filter_activations(
 
 @conv_filter_ex.capture
 def compute_nullified_predictions(
-    model, files_spec_path, activations, num_tasks, input_length,
+    model, files_spec_path, activations, filter_index, num_tasks, input_length,
     profile_length, reference_fasta, full_chrom_set
 ):
     """
-    From an imported model, computes the predictions for all peaks if each of
+    From an imported model, computes the predictions for all peaks if one of
     the first-layer filters were nullified. Nullification of a filter occurs
     by setting that filter's activation to be the average over all peaks.
     Arguments:
@@ -129,43 +129,34 @@ def compute_nullified_predictions(
         `files_spec_path`: path to the JSON files spec for the model
         `activations`: an N x W x F array of activations for the original model,
             returned by `compute_filter_activations`
-    Returns an N x F x T x O x 2 array of predicted log profile probabilities
-    (if each of the F filters were nullified), and an N x F x T x 2 array of
-    predicted log counts if each of the F filters were nullified.
+        `filter_index`: index of filter to nullify
+    Returns an N x T x O x 2 array of predicted log profile probabilities and an
+    N x T x 2 array of predicted log counts.
     """
     num_samples, num_filters = activations.shape[0], activations.shape[2]
-    all_log_pred_profs = np.empty(
-        (num_samples, num_filters, num_tasks, profile_length, 2)
-    )
-    all_log_pred_counts = np.empty((num_samples, num_filters, num_tasks, 2))
 
     # Save the filter weights from the first layer
     filter_weights = model.get_layer("dil_conv_1").get_weights()
 
-    # For each filter, nullify it and run predictions
-    for filter_index in range(num_filters):
-        # Nullify the filter
-        nulled_weights = [x.copy() for x in filter_weights]
-        nulled_weights[0][:, :, filter_index] = 0  # Multiplicative weights to 0
-        nulled_weights[1][filter_index] = np.mean(
-            activations[:, :, filter_index]
-        )  # Set bias to the average activation for the filter over all examples
-        
-        # Set the weights to nullify the filter
-        model.get_layer("dil_conv_1").set_weights(nulled_weights)
+    # Nullify the filter and run predictions
+    nulled_weights = [x.copy() for x in filter_weights]
+    nulled_weights[0][:, :, filter_index] = 0  # Multiplicative weights to 0
+    nulled_weights[1][filter_index] = np.mean(
+        activations[:, :, filter_index]
+    )  # Set bias to the average activation for the filter over all examples
+    
+    # Set the weights to nullify the filter
+    model.get_layer("dil_conv_1").set_weights(nulled_weights)
 
-        print("\tNullifying filter %d" % (filter_index + 1))
-        # Run predictions
-        _, log_pred_profs, log_pred_counts, _, _ = \
-            compute_predictions.get_predictions(
-                model, files_spec_path, input_length, profile_length, num_tasks,
-                reference_fasta, chrom_set=full_chrom_set
-            )
-        all_log_pred_profs[:, filter_index, :, :, :] = log_pred_profs
-        all_log_pred_counts[:, filter_index, :, :] = log_pred_counts
+    # Run predictions
+    _, log_pred_profs, log_pred_counts, _, _ = \
+        compute_predictions.get_predictions(
+            model, files_spec_path, input_length, profile_length, num_tasks,
+            reference_fasta, chrom_set=full_chrom_set
+        )
 
     model.get_layer("dil_conv_1").set_weights(filter_weights)  # Restore weights
-    return all_log_pred_profs, all_log_pred_counts
+    return log_pred_profs, log_pred_counts
 
 
 @conv_filter_ex.capture
@@ -221,31 +212,58 @@ def compute_all_filter_predictions(
     print("Saving predictions...")
     truth_group = h5_file.create_group("truth")
     pred_group = h5_file.create_group("predictions")
-    truth_group.create_dataset("coords_chrom", data=coords[:, 0].astype("S"))
-    truth_group.create_dataset("coords_start", data=coords[:, 1].astype(int))
-    truth_group.create_dataset("coords_end", data=coords[:, 2].astype(int))
-    truth_group.create_dataset("true_profs", data=true_profs)
-    truth_group.create_dataset("true_counts", data=true_counts)
-    pred_group.create_dataset("log_pred_profs", data=log_pred_profs)
-    pred_group.create_dataset("log_pred_counts", data=log_pred_counts)
+    truth_group.create_dataset(
+        "coords_chrom", data=coords[:, 0].astype("S"), compression="gzip"
+    )
+    truth_group.create_dataset(
+        "coords_start", data=coords[:, 1].astype(int), compression="gzip"
+    )
+    truth_group.create_dataset(
+        "coords_end", data=coords[:, 2].astype(int), compression="gzip"
+    )
+    truth_group.create_dataset(
+        "true_profs", data=true_profs, compression="gzip"
+    )
+    truth_group.create_dataset(
+        "true_counts", data=true_counts, compression="gzip"
+    )
+    pred_group.create_dataset(
+        "log_pred_profs", data=log_pred_profs, compression="gzip"
+    )
+    pred_group.create_dataset(
+        "log_pred_counts", data=log_pred_counts, compression="gzip"
+    )
     
     # Compute normal filter activations
     print("Computing filter activations...")
     activations = compute_filter_activations(model, files_spec_path)
 
     print("Saving activations...")
-    h5_file.create_dataset("activations", data=activations)
+    h5_file.create_dataset("activations", data=activations, compression="gzip")
 
     # Compute predictions after nullifying each filter
     print("Computing null-filter predictions...")
-    log_pred_profs, log_pred_counts = compute_nullified_predictions(
-        model, files_spec_path, activations, num_tasks
+    num_samples, num_filters = activations.shape[0], activations.shape[2]
+
+    null_pred_group = h5_file.create_group("nullified_predictions")
+    null_log_pred_profs = null_pred_group.create_dataset(
+        "log_pred_profs",
+        (num_samples, num_filters, num_tasks, profile_length, 2),
+        compression="gzip"
+    )
+    null_log_pred_counts = null_pred_group.create_dataset(
+        "log_pred_counts", (num_samples, num_filters, num_tasks, 2),
+        compression="gzip"
     )
 
-    print("Saving null-filter predictions...")
-    null_pred_group = h5_file.create_group("nullified_predictions")
-    null_pred_group.create_dataset("log_pred_profs", data=log_pred_profs)
-    null_pred_group.create_dataset("log_pred_counts", data=log_pred_counts)
+    for filter_index in range(num_filters):
+        print("\tNullifying filter %d" % (filter_index + 1))
+        log_pred_profs, log_pred_counts = compute_nullified_predictions(
+            model, files_spec_path, activations, filter_index, num_tasks
+        )
+        print("\tSaving null-filter activations...")
+        null_log_pred_profs[:, filter_index, :, :, :] = log_pred_profs
+        null_log_pred_counts[:, filter_index, :, :] = log_pred_counts
 
     h5_file.close()
 
