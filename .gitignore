@@ -109,6 +109,9 @@ venv.bak/
 # Saved models
 models/
 
+# Results
+results/
+
 # Temporary files
 temp/
 

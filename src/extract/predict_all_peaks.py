@@ -140,6 +140,21 @@ def predict_all_peaks(
         `files_spec_path`: path to the JSON files spec for the model
         `num_tasks`: number of tasks in the model
         `out_hdf5_path`: path to store results
+    Results will be saved in the specified HDF5, under the following keys:
+        `fold{i}`:
+            `coords`:
+                `coords_chrom`: N-array of chromosome (string)
+                `coords_start`: N-array
+                `coords_end`: N-array
+            `predictions`:
+                `log_pred_profs`: N x T x O x 2 array of predicted log profile
+                    probabilities
+                `log_pred_counts`: N x T x 2 array of log counts
+                `true_profs`: N x T x O x 2 array of true profile counts
+                `true_counts`: N x T x 2 array of true counts
+            `performance`:
+                Keys and values defined in `profile_performance.py`
+        ...
     """
     with open(splits_json_path, "r") as f:
         splits_json = json.load(f)
