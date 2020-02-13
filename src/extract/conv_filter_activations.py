@@ -38,6 +38,10 @@ def config():
     full_chrom_set = splits_json["1"]["train"] + splits_json["1"]["val"] + \
         splits_json["1"]["test"]
 
+    # Number of coordinates to keep for computing activations and nullified
+    # predictions
+    coord_keep_num = 10000
+
 
 def import_model(model_path, num_tasks, profile_length):
     """
@@ -59,18 +63,54 @@ def import_model(model_path, num_tasks, profile_length):
 
 
 @conv_filter_ex.capture
+def filter_coordinates(
+    coords, log_pred_profs, true_profs, true_counts, coord_keep_num
+):
+    """
+    Given the predicted and true values for many coordinates, filters the
+    coordinates for a limited set of best-performing coordinates in the model.
+    Performance is ranked by normalized profile NLL.
+    Arguments:
+        `coords`: N x 3 array of coordinates predicted
+        `log_pred_profs`: N x T x O x 2 array of predicted profile log
+            probabilities
+        `true_profs`: N x T x O x 2 array of true profile counts
+        `true_counts`: N x T x 2 array of true total counts
+        `keep_num`: maximum number of coordinates to keep
+    Returns an M x 3 array of filtered (kept) coordinates.
+    """
+    # Swap axes on profiles to make them N x T x 2 x O
+    true_profs = np.swapaxes(true_profs, 2, 3)
+    log_pred_profs = np.swapaxes(log_pred_profs, 2, 3)
+    
+    nll = -profile_performance.multinomial_log_probs(
+        log_pred_profs, true_counts, true_profs
+    )  # Shape: N x T x 2
+
+    # Normalize the NLLs by dividing by the average counts over strands/tasks
+    norm_nll = nll / true_counts
+
+    # Average over tasks and strands to get normalized NLL per sample
+    avg_norm_nll = np.mean(norm_nll, axis=(1, 2))
+
+    # Only keep top `keep_num` coordinates
+    return coords[np.flip(np.argsort(avg_norm_nll))[:coord_keep_num]]
+
+
+@conv_filter_ex.capture
 def compute_filter_activations(
-    model, files_spec_path, input_length, profile_length, reference_fasta,
-    full_chrom_set, batch_size=128
+    model, files_spec_path, coords, input_length, profile_length,
+    reference_fasta, batch_size=128
 ):
     """
     From an imported model, computes the first-layer convolutional filter
-    activations for all peaks.
+    activations for a set of specified coordinates
     Arguments:
         `model`: imported `profile_tf_binding_predictor` model
         `files_spec_path`: path to the JSON files spec for the model
+        `coords`: an M x 3 array of what coords to run this for
         `batch_size`: batch size for computation
-    Returns an N x W x F array of activations, where W is the number of windows
+    Returns an M x W x F array of activations, where W is the number of windows
     of the filter length in an input sequence, and F is the number of filters.
     """
     # Get the filters in the existing model
@@ -98,9 +138,6 @@ def compute_filter_activations(
     input_func = data_loading.get_input_func(
         files_spec_path, input_length, profile_length, reference_fasta
     )
-    coords = data_loading.get_positive_inputs(
-        files_spec_path, chrom_set=full_chrom_set
-    )
 
     # Run all data through the filter model, which returns filter activations
     all_activations = np.empty((len(coords), num_windows, num_filters))
@@ -117,8 +154,9 @@ def compute_filter_activations(
 
 @conv_filter_ex.capture
 def compute_nullified_predictions(
-    model, files_spec_path, activations, filter_index, num_tasks, input_length,
-    profile_length, reference_fasta, full_chrom_set
+    model, files_spec_path, coords, activations, filter_index, num_tasks,
+    input_length, profile_length, reference_fasta, full_chrom_set,
+    batch_size=128
 ):
     """
     From an imported model, computes the predictions for all peaks if one of
@@ -127,11 +165,13 @@ def compute_nullified_predictions(
     Arguments:
         `model`: imported `profile_tf_binding_predictor` model
         `files_spec_path`: path to the JSON files spec for the model
-        `activations`: an N x W x F array of activations for the original model,
+        `coords`: an M x 3 array of what coords to run this for
+        `activations`: an M x W x F array of activations for the original model,
             returned by `compute_filter_activations`
         `filter_index`: index of filter to nullify
-    Returns an N x T x O x 2 array of predicted log profile probabilities and an
-    N x T x 2 array of predicted log counts.
+        `batch_size`: batch size for computation
+    Returns an M x T x O x 2 array of predicted log profile probabilities and an
+    M x T x 2 array of predicted log counts.
     """
     num_samples, num_filters = activations.shape[0], activations.shape[2]
 
@@ -148,15 +188,25 @@ def compute_nullified_predictions(
     # Set the weights to nullify the filter
     model.get_layer("dil_conv_1").set_weights(nulled_weights)
 
+    # Create data loader
+    input_func = data_loading.get_input_func(
+        files_spec_path, input_length, profile_length, reference_fasta
+    )
+
     # Run predictions
-    _, log_pred_profs, log_pred_counts, _, _ = \
-        compute_predictions.get_predictions(
-            model, files_spec_path, input_length, profile_length, num_tasks,
-            reference_fasta, chrom_set=full_chrom_set
-        )
+    all_log_pred_profs = np.empty((len(coords), num_tasks, profile_length, 2))
+    all_log_pred_counts = np.empty((len(coords), num_tasks, 2))
+    num_batches = int(np.ceil(len(coords) / batch_size))
+    for i in tqdm.trange(num_batches):
+        batch_slice = slice(i * batch_size, (i + 1) * batch_size)
+        batch = coords[batch_slice]
+        log_pred_profs, log_pred_counts, _, _ = \
+            compute_predictions.get_predictions_batch(model, batch, input_func)
+        all_log_pred_profs[batch_slice] = log_pred_profs
+        all_log_pred_counts[batch_slice] = log_pred_counts
 
     model.get_layer("dil_conv_1").set_weights(filter_weights)  # Restore weights
-    return log_pred_profs, log_pred_counts
+    return all_log_pred_profs, all_log_pred_counts
 
 
 @conv_filter_ex.capture
@@ -181,13 +231,15 @@ def compute_all_filter_predictions(
                 probabilities (N is the number of peaks, T is number of tasks,
                 O is profile length, 2 for each strand)
             `log_pred_counts`: N x T x 2 array of log counts
-        `activations`: N x W x F array of activations (W is number of windows
+        `filtered_coords`: M x 3 array of coordinates used to compute
+            activations and nullified predictions (subset of all peaks)
+        `activations`: M x W x F array of activations (W is number of windows
             of the filter length in the input sequence, F is the number of
             filters)
         `nullified_predictions`:
-            `log_pred_profs`: N x F x T x O x 2 array of predicted log profile
+            `log_pred_profs`: M x F x T x O x 2 array of predicted log profile
                 probabilities if each of the F filters were nullified
-            `log_pred_counts`: N x F x T x 2 array of log counts if each of the
+            `log_pred_counts`: M x F x T x 2 array of log counts if each of the
                 F filters were nullified
         `truth`:
             `coords_chrom`: N-array of chromosome (string)
@@ -233,10 +285,19 @@ def compute_all_filter_predictions(
     pred_group.create_dataset(
         "log_pred_counts", data=log_pred_counts, compression="gzip"
     )
-    
+
+    # Filter set of coordinates for top-performing coordinates
+    print("Filtering coordinates down...")
+    filtered_coords = filter_coordinates(
+        coords, log_pred_profs, true_profs, true_counts
+    )
+
     # Compute normal filter activations
+
     print("Computing filter activations...")
-    activations = compute_filter_activations(model, files_spec_path)
+    activations = compute_filter_activations(
+        model, files_spec_path, filtered_coords
+    )
 
     print("Saving activations...")
     h5_file.create_dataset("activations", data=activations, compression="gzip")
@@ -259,7 +320,8 @@ def compute_all_filter_predictions(
     for filter_index in range(num_filters):
         print("\tNullifying filter %d" % (filter_index + 1))
         log_pred_profs, log_pred_counts = compute_nullified_predictions(
-            model, files_spec_path, activations, filter_index, num_tasks
+            model, files_spec_path, filtered_coords, activations, filter_index,
+            num_tasks
         )
         print("\tSaving null-filter activations...")
         null_log_pred_profs[:, filter_index, :, :, :] = log_pred_profs
@@ -277,8 +339,8 @@ def run(model_path, files_spec_path, num_tasks, out_hdf5_path):
 
 @conv_filter_ex.automain
 def main():
-    model_path = "/users/amtseng/tfmodisco/models/trained_models/SPI1_fold7/1/model_ckpt_epoch_8.h5"
     files_spec_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/SPI1/SPI1_training_paths.json"
+    model_path = "/users/amtseng/tfmodisco/models/trained_models/SPI1_fold1/1/model_ckpt_epoch_8.h5"
     num_tasks = 4
     out_hdf5_path = "/users/amtseng/tfmodisco/results/filter_activations/SPI1/SPI1_filter_activations.h5"
 
