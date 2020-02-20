@@ -152,7 +152,6 @@ def create_explainer(model, task_index=None):
 if __name__ == "__main__":
     import json
     import model.train_profile_model as train_profile_model
-    import feature.util as feature_util
     import feature.make_profile_dataset as make_profile_dataset
     import keras.utils
     import tqdm
