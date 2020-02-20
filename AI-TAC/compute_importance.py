@@ -92,8 +92,7 @@ class WrapperModel(torch.nn.Module):
         model will return an output of shape B x 1, which will be a single task's
         output, or all outputs summed.
         Arguments:
-            `inner_model`: an instantiated or loaded model from
-                `profile_model.profile_tf_binding_predictor`
+            `inner_model`: an instantiated or loaded AI-TAC model
             `task_index`: a specific task index (0-indexed) to perform
                 explanations from (i.e. explanations will only be from the
                 specified outputs); by default explains all tasks

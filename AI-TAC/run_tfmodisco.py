@@ -28,7 +28,7 @@ def prepare_tfm_inputs(shap_score_hdf5_path):
     batch_size = min(1000, num_seqs)
     num_batches = int(np.ceil(num_seqs / batch_size))
 
-    # Read in hypothetical scores, cutting off everything outside central `padded_size`
+    # Read in hypothetical scores/input sequences
     hyp_scores = np.empty((num_seqs, input_length, 4), dtype=float)
     input_seqs = np.empty((num_seqs, input_length, 4), dtype=float)
     for i in tqdm.trange(num_batches, desc="Importing scores"):
