@@ -62,6 +62,10 @@ def main(
         peak_beds = [peak_beds[task_index]]
     profile_hdf5 = files_spec["profile_hdf5"]
 
+    # Get set of chromosomes from given chromosome sizes
+    with open(chrom_sizes, "r") as f:
+        chrom_set = [line.split()[0] for line in f]
+
     # Import model
     model = train_profile_model.load_model(
         model_path, num_tasks, profile_length
@@ -74,7 +78,7 @@ def main(
         batch_size=batch_size, reference_fasta=reference_fasta,
         chrom_sizes=chrom_sizes, input_length=input_length,
         profile_length=profile_length, negative_ratio=0, peak_tiling_stride=0,
-        revcomp=False, jitter_size=0, dataset_seed=None, chrom_set=None,
+        revcomp=False, jitter_size=0, dataset_seed=None, chrom_set=chrom_set,
         shuffle=False, return_coords=True
     )
     enq = keras.utils.OrderedEnqueuer(data_loader, use_multiprocessing=True)
