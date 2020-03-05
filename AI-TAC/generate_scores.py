@@ -22,6 +22,7 @@ def suppress_stdout():
 
 
 if __name__ == "__main__":
+    import deeplift.visualization.viz_sequence as viz_sequence
     # Set paths/constants
     base_path = "/users/amtseng/tfmodisco/data/processed/AI-TAC/data/"
     model_path = os.path.join(base_path, "AITAC.ckpt")
@@ -48,27 +49,31 @@ if __name__ == "__main__":
     # ID assigned to each peak (OCR), in the same order as above 2 files
     peak_names = np.load(os.path.join(base_path, "peak_names.npy"))
     
-    # Chromosome of each peak in the same order as above files, to easily split data
+    # Chromosome of each peak in the same order as above files, to easily split
+    # data
     chromosomes = np.load(os.path.join(base_path, "chromosomes.npy"))
     
-    # Names of each immune cell type in the same order as cell_type_array.npy, along
-    # with lineage designation of each cell type
-    cell_type_names = np.load(os.path.join(base_path, "cell_type_names.npy"), allow_pickle=True)
+    # Names of each immune cell type in the same order as cell_type_array.npy,
+    # along with lineage designation of each cell type
+    cell_type_names = np.load(
+        os.path.join(base_path, "cell_type_names.npy"), allow_pickle=True
+    )
     
     # Generate importance scores
     num_samples = one_hot_seqs.shape[0]
     num_batches = int(np.ceil(num_samples / batch_size))
     input_length = one_hot_seqs.shape[2]
     
-    explainer = compute_importance.create_explainer(model, input_length, task_index=None)
-    
+    explainer = compute_importance.create_explainer(
+        model, input_length, task_index=None
+    )
     hyp_scores = np.empty_like(one_hot_seqs)
-    
     for i in tqdm.trange(num_batches):
-        batch = one_hot_seqs[(i * batch_size) : ((i + 1) * batch_size)]
+        batch_slice = slice(i * batch_size, (i + 1) * batch_size)
+        batch = one_hot_seqs[batch_slice]
         with suppress_stdout():
-            hyp_scores[(i * batch_size) : ((i + 1) * batch_size)] = explainer(batch)
-    
+            hyp_scores[batch_slice] = explainer(batch)
+
     with h5py.File(outfile, "w") as f:
         f.create_dataset("hyp_scores", data=hyp_scores)
         f.create_dataset("one_hot_seqs", data=one_hot_seqs)

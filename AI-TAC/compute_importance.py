@@ -142,12 +142,11 @@ def create_explainer(model, input_length, bg_size=10, task_index=None):
 
     def explain_fn(input_seqs):
         """
-        Given input sequences and control profiles, returns hypothetical scores
-        for the input sequences.
+        Given input sequences to AI-TAC, returns hypothetical scores for the
+        input sequences.
         Arguments:
-            `input_seqs`: a B x I x 4 array
-            `cont_profs`: a B x T x O x 4 array
-        Returns a B x I x 4 array containing hypothetical importance scores for
+            `input_seqs`: a B x 4 x I array
+        Returns a B x 4 x I array containing hypothetical importance scores for
         each of the B input sequences.
         """
         # Convert to tensors
