@@ -24,8 +24,9 @@ def suppress_stdout():
 if __name__ == "__main__":
     import deeplift.visualization.viz_sequence as viz_sequence
     # Set paths/constants
-    base_path = "/users/amtseng/tfmodisco/data/processed/AI-TAC/data/"
-    model_path = os.path.join(base_path, "AITAC.ckpt")
+    base_path = "/users/amtseng/tfmodisco/data/processed/AI-TAC/"
+    data_path = os.path.join(base_path, "data")
+    model_path = os.path.join(base_path, "models", "AITAC.ckpt")
     outfile = "/users/amtseng/tfmodisco/motifs/AI-TAC/centerabs_aggregate_scores.h5"
     
     num_classes = 81
@@ -41,22 +42,22 @@ if __name__ == "__main__":
     
     # Import other data
     # Normalized peak heights for all cell types
-    cell_type_array = np.load(os.path.join(base_path, "cell_type_array.npy"))
+    cell_type_array = np.load(os.path.join(data_path, "cell_type_array.npy"))
     
     # One-hot-encoded sequences: N x 4 x 251
-    one_hot_seqs = np.load(os.path.join(base_path, "one_hot_seqs.npy"))
+    one_hot_seqs = np.load(os.path.join(data_path, "one_hot_seqs.npy"))
     
     # ID assigned to each peak (OCR), in the same order as above 2 files
-    peak_names = np.load(os.path.join(base_path, "peak_names.npy"))
+    peak_names = np.load(os.path.join(data_path, "peak_names.npy"))
     
     # Chromosome of each peak in the same order as above files, to easily split
     # data
-    chromosomes = np.load(os.path.join(base_path, "chromosomes.npy"))
+    chromosomes = np.load(os.path.join(data_path, "chromosomes.npy"))
     
     # Names of each immune cell type in the same order as cell_type_array.npy,
     # along with lineage designation of each cell type
     cell_type_names = np.load(
-        os.path.join(base_path, "cell_type_names.npy"), allow_pickle=True
+        os.path.join(data_path, "cell_type_names.npy"), allow_pickle=True
     )
     
     # Generate importance scores
