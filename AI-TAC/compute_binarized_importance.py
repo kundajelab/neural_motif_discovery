@@ -1,34 +1,29 @@
 from deeplift.dinuc_shuffle import dinuc_shuffle
 import shap
-import torch
+import tensorflow as tf
+import keras
 import numpy as np
 
-def create_background(input_seq, input_length, bg_size=10, seed=20200127):
+def create_background(input_seq, bg_size=10, seed=20200127):
     """
-    From a pair of single inputs to the model, generates the set of background
-    inputs to perform interpretation against.
+    From the inputs to the model, generates the set of background inputs to
+    perform interpretation against.
     Arguments:
         `input_seq`: a list of a single one-hot encoded input sequence of
             shape 4 x I
         `input_length`: length of input, I
         `bg_size`: the number of background examples to generate.
-    Returns a single tensor in a list, where the tensor is G x 4 x I; these
-    are the background inputs, which consists of random dinuceotide-shuffles
-    of the original sequence.
+    Returns a single G x 4 x I NumPy array in a list; these are the background
+    inputs, which consists of random dinuceotide-shuffles of the original
+    sequence.
     """
-    input_seq_bg_shape = (bg_size, 4, input_length)
-    if input_seq is None:
-        # For DeepSHAP PyTorch, the model inputs could be None, but something
-        # of the right shape still needs to be returned
-        return [torch.zeros(input_seq_bg_shape).cuda().float()]
-    else:
-        input_seq_np = input_seq[0].cpu().numpy()
-        input_seq_bg = np.empty(input_seq_bg_shape)
-        rng = np.random.RandomState(seed)
-        for i in range(bg_size):
-            input_seq_shuf = dinuc_shuffle(np.transpose(input_seq_np), rng=rng)
-            input_seq_bg[i] = np.transpose(input_seq_shuf)
-        return [torch.tensor(input_seq_bg).cuda().float()]
+    input_seq = input_seq[0]
+    input_seq_bg = np.empty((bg_size,) + input_seq.shape)
+    rng = np.random.RandomState(seed)
+    for i in range(bg_size):
+        input_seq_shuf = dinuc_shuffle(np.transpose(input_seq), rng=rng)
+        input_seq_bg[i] = np.transpose(input_seq_shuf)
+    return [input_seq_bg]
 
 
 def combine_mult_and_diffref(mult, orig_inp, bg_data):
@@ -84,85 +79,51 @@ def combine_mult_and_diffref(mult, orig_inp, bg_data):
     return [input_seq_hyp_scores]
 
 
-class WrapperModel(torch.nn.Module):
-    def __init__(self, inner_model, task_index, normalize=False):
-        """
-        Takes an AI-TAC model and constructs wrapper model around it. This model
-        takes in the same input (i.e. input tensor of shape B x 4 x I). The
-        model will return an output of shape B x 1, which will be a single task's
-        output, or all outputs summed.
-        Arguments:
-            `inner_model`: an instantiated or loaded AI-TAC model
-            `task_index`: a specific task index (0-indexed) to perform
-                explanations from (i.e. explanations will only be from the
-                specified outputs); by default explains all tasks
-            `normalize`: if True, mean-normalize the outputs and take the
-                absolute value before adding them up
-        """
-        super().__init__()
-        self.inner_model = inner_model
-        self.task_index = task_index
-        self.normalize = normalize
-        
-    def forward(self, input_seqs):
-        predictions, activations, act_index = self.inner_model(input_seqs)
-
-        if self.normalize:
-            # Mean-normalize and take absolute value
-            mean = torch.mean(predictions, dim=1, keepdim=True)
-            predictions = torch.abs(predictions - mean)
-        
-        if self.task_index:
-            return predictions[:, self.task_index : (self.task_index + 1)]
-        else:
-            return torch.sum(predictions, dim=1, keepdim=True)
-
-
-def create_explainer(
-    model, input_length, bg_size=10, task_index=None, normalize=False
-):
+def create_explainer(model, bg_size=10, task_index=None, use_logits=True):
     """
-    Given a trained PyTorch model, creates a Shap DeepExplainer that returns
-    hypothetical scores for the input sequence.
+    Given the trained binarized AI-TAC Keras model, creates a Shap DeepExplainer
+    that returns hypothetical scores for the input sequence.
     Arguments:
-        `model`: a model from `aitac` to explain
-        `input_length`: length of input, I
+        `model`: the loaded binarized AI-TAC Keras model
         `bg_size`: the number of background examples to generate.
         `task_index`: a specific task index (0-indexed) to perform explanations
             from (i.e. explanations will only be from the specified outputs); by
             default explains all tasks
-        `normalize`: if True, mean-normalize the outputs and take the
-            absolute value before adding them up to do explanations from
-    Returns a function that takes in input sequences, and outputs hypothetical
-    scores for the input sequences.
+        `use_logits`: if True, do explanations from pre-sigmoid logits, not the
+            final sigmoid layer
+    Returns a function that takes in input sequences and outputs hypothetical
+    scores for the input sequences
     """
-    wrapper_model = WrapperModel(model, task_index, normalize)
+    if not use_logits:
+        output = model.output  # Shape: N x 81, the sigmoid output
+    else:
+        # Create a new last output, which does not have the sigmoid activation
+        last_layer = model.layers[-1]
+        prev_output = model.layers[-2].output
+        output = tf.matmul(prev_output, last_layer.kernel) + last_layer.bias
     
-    bg_func = lambda input_seq: create_background(
-        input_seq, input_length, bg_size=bg_size, seed=None
-    )
-
+    if task_index:
+        output = output[:, task_index : task_index + 1]
+    output_sum = tf.reduce_sum(output, axis=1)
     explainer = shap.DeepExplainer(
-        model=wrapper_model,
-        data=bg_func,
+        model=(model.input, output_sum),
+        data=create_background,
         combine_mult_and_diffref=combine_mult_and_diffref
     )
 
     def explain_fn(input_seqs):
         """
         Given input sequences to AI-TAC, returns hypothetical scores for the
-        input sequences.
+        input sequences, based on a binarized Keras model.
         Arguments:
             `input_seqs`: a B x 4 x I array
         Returns a B x 4 x I array containing hypothetical importance scores for
         each of the B input sequences.
         """
-        # Convert to tensors
-        input_seqs_t = torch.tensor(input_seqs).cuda().float()
-
-        return explainer.shap_values(
-            [input_seqs_t], progress_message=None
-        )[0]
+        # The Keras model takes in input sequences of shape B x 4 x I
+        values = explainer.shap_values(
+            [np.swapaxes(input_seqs, 1, 2)], progress_message=None
+        )  # Unlike the PyTorch explainer, this is not returned in a list
+        return np.swapaxes(values, 1, 2)
 
     return explain_fn
-
