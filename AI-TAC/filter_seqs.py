@@ -1,8 +1,6 @@
-import torch
 import numpy as np
 import os
 import click
-import aitac
 import h5py
 import tqdm
 
@@ -24,40 +22,84 @@ def pearson_corr(arr1, arr2):
     )
 
 
-@click.command()
-@click.option(
-    "--thresh", "-t", default=0.75,
-    help="Minimum correlation to be considered 'well-predicted'"
-)
-@click.argument("shap_score_hdf5_in_path", nargs=1)
-@click.argument("shap_score_hdf5_out_path", nargs=1)
-def main(shap_score_hdf5_in_path, shap_score_hdf5_out_path, thresh):
-    """
-    Filters the SHAP scores for only the ones that are well-predicted.
-    """
-    # Define some paths
-    base_path = "/users/amtseng/tfmodisco/data/processed/AI-TAC/data/"
-    model_path = os.path.join(base_path, "AITAC.ckpt")
-    cell_type_array = np.load(os.path.join(base_path, "cell_type_array.npy"))
-    one_hot_seqs = np.load(os.path.join(base_path, "one_hot_seqs.npy"))
-
-    num_classes = 81
-    num_filters = 300
-    batch_size = 100
-
-    # Import the model
+def make_aitac_predictor(model_path, num_classes, num_filters):
+    import torch
+    import aitac
+    # Import model
     model = aitac.ConvNet(num_classes, num_filters)
     model.load_state_dict(torch.load(model_path))
     model.eval()
     torch.set_grad_enabled(True)
     model = model.cuda()
 
+    def predictor(input_seqs):
+        preds = model(torch.tensor(input_seqs).cuda().float())[0]
+        return preds.detach().cpu().numpy()
+    return predictor
+
+
+def make_binarized_aitac_predictor(model_arch_path, model_weights_path):
+    import keras
+    import compute_binarized_shap
+    # Import model
+    with open(model_arch_path, "r") as f:
+        model_arch = f.read()
+    model = keras.models.model_from_json(model_arch)
+    model.load_weights(model_weights_path)
+    
+    def predictor(input_seqs):
+        # The binarized model takes in B x I x 4, not B x 4 x I
+        preds = model.predict_on_batch(np.swapaxes(input_seqs, 1, 2))
+        return preds
+    return predictor
+
+
+@click.command()
+@click.option(
+    "--thresh", "-t", default=0.75,
+    help="Minimum correlation to be considered 'well-predicted'"
+)
+@click.option(
+    "--binarized", "-b", is_flag=True, help="Is binarized model? By default no"
+)
+@click.argument("shap_score_hdf5_in_path", nargs=1)
+@click.argument("shap_score_hdf5_out_path", nargs=1)
+def main(shap_score_hdf5_in_path, shap_score_hdf5_out_path, thresh, binarized):
+    """
+    Filters the SHAP scores for only the ones that are well-predicted.
+    """
+    # Define some paths
+    base_path = "/users/amtseng/tfmodisco/data/processed/AI-TAC/"
+    data_path = os.path.join(base_path, "data")
+    models_path = os.path.join(base_path, "models")
+
+    num_classes = 81
+    num_filters = 300
+    batch_size = 100
+
+    # Define model paths, depending on the model type
+    if binarized:
+        model_arch_path = os.path.join(models_path, "keras_sigmoid.json")
+        model_weights_path = os.path.join(models_path, "keras_sigmoid.h5")
+        predictor = make_binarized_aitac_predictor(
+            model_arch_path, model_weights_path
+        )
+    else:
+        model_path = os.path.join(models_path, "AITAC.ckpt")
+        predictor = make_aitac_predictor(model_path, num_classes, num_filters)
+    
+    # Import data
+    # Normalized peak heights for all cell types
+    cell_type_array = np.load(os.path.join(data_path, "cell_type_array.npy"))
+    
+    # One-hot-encoded sequences: N x 4 x 251
+    one_hot_seqs = np.load(os.path.join(data_path, "one_hot_seqs.npy"))
+    
     score_reader = h5py.File(shap_score_hdf5_in_path, "r")
     score_writer = h5py.File(shap_score_hdf5_out_path, "w")
 
     # AI-TAC scores/sequences were computed as N x 4 x I
     num_seqs, _, input_length = score_reader["hyp_scores"].shape
-
     num_batches = int(np.ceil(num_seqs / batch_size))
 
     kept_hyp_scores = []
@@ -71,8 +113,7 @@ def main(shap_score_hdf5_in_path, shap_score_hdf5_out_path, thresh):
         assert np.all(input_seqs == one_hot_seqs[batch_slice])
 
         # Get model predictions
-        predictions, _, _ = model(torch.tensor(input_seqs).cuda().float())
-        predictions = predictions.detach().cpu().numpy()
+        predictions = predictor(input_seqs)
 
         actual = cell_type_array[batch_slice]
         corrs = pearson_corr(predictions, actual)

@@ -23,7 +23,7 @@ def get_aitac_explainer(
 ):
     import torch
     import aitac
-    import compute_importance
+    import compute_shap
     # Import model
     model = aitac.ConvNet(num_classes, num_filters)
     model.load_state_dict(torch.load(model_path))
@@ -32,7 +32,7 @@ def get_aitac_explainer(
     model = model.cuda()
 
     # Create explainer 
-    return compute_importance.create_explainer(
+    return compute_shap.create_explainer(
         model, input_length, task_index=None, normalize=normalize
     )
 
@@ -41,14 +41,14 @@ def get_binarized_aitac_explainer(
     model_arch_path, model_weights_path, use_logits=True
 ):
     import keras
-    import compute_binarized_importance
+    import compute_binarized_shap
     # Import model
     with open(model_arch_path, "r") as f:
         model_arch = f.read()
     model = keras.models.model_from_json(model_arch)
     model.load_weights(model_weights_path)
 
-    return compute_binarized_importance.create_explainer(
+    return compute_binarized_shap.create_explainer(
         model, task_index=None, use_logits=use_logits
     )
 
@@ -77,8 +77,7 @@ def main(outfile, binarized, use_logits, normalize):
     num_filters = 300
     batch_size = 100
    
-    # Is the model binarized? If so, do we use logits? Otherwise, normalize?
-    # Define model paths
+    # Define model paths, depending on the model type
     if binarized:
         model_arch_path = os.path.join(models_path, "keras_sigmoid.json")
         model_weights_path = os.path.join(models_path, "keras_sigmoid.h5")
