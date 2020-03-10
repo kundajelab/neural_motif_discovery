@@ -10,10 +10,10 @@ def create_background(input_seq, bg_size=10, seed=20200127):
     perform interpretation against.
     Arguments:
         `input_seq`: a list of a single one-hot encoded input sequence of
-            shape 4 x I
+            shape I x 4
         `input_length`: length of input, I
         `bg_size`: the number of background examples to generate.
-    Returns a single G x 4 x I NumPy array in a list; these are the background
+    Returns a single G x I x 4 NumPy array in a list; these are the background
     inputs, which consists of random dinuceotide-shuffles of the original
     sequence.
     """
@@ -21,8 +21,7 @@ def create_background(input_seq, bg_size=10, seed=20200127):
     input_seq_bg = np.empty((bg_size,) + input_seq.shape)
     rng = np.random.RandomState(seed)
     for i in range(bg_size):
-        input_seq_shuf = dinuc_shuffle(np.transpose(input_seq), rng=rng)
-        input_seq_bg[i] = np.transpose(input_seq_shuf)
+        input_seq_bg[i] = dinuc_shuffle(input_seq, rng=rng)
     return [input_seq_bg]
 
 
@@ -35,11 +34,11 @@ def combine_mult_and_diffref(mult, orig_inp, bg_data):
     differences, over the base identities. For the control profiles, the
     returned contribution is 0.
     Arguments:
-        `mult`: multipliers for the background data: a G x 4 x I array
+        `mult`: multipliers for the background data: a G x I x 4 array
         `orig_inp`: the original target inputs to compute contributions for:
-            a list of a 4 x I array
-        `bg_data`: the background data: a G x 4 x I array
-    Returns the set of importance scores as a list of a 4 x I array.
+            a list of a I x 4 array
+        `bg_data`: the background data: a G x I x 4 array
+    Returns the set of importance scores as a list of an I x 4 array.
     Note that this rule is necessary because by default, the multipliers are
     multiplied by the difference-from-reference (for each reference in the
     background set). However, using the actual sequence as the target would not
@@ -58,21 +57,21 @@ def combine_mult_and_diffref(mult, orig_inp, bg_data):
     input_seq_hyp_scores_eachref = np.empty_like(input_seq_bg)
     
     # Loop over input bases
-    for i in range(input_seq.shape[0]):
+    for i in range(input_seq.shape[1]):
         # Create hypothetical input of all one type of base
         hyp_input_seq = np.zeros_like(input_seq)
-        hyp_input_seq[i, :] = 1
+        hyp_input_seq[:, i] = 1
 
         # Compute difference from reference for each reference
         diff_from_ref = np.expand_dims(hyp_input_seq, axis=0) - input_seq_bg
-        # Shape: G x 4 x I
+        # Shape: G x I x 4
 
         # Weight difference-from-reference by multipliers
         contrib = diff_from_ref * input_mult
 
         # Sum across bases axis; this computes the hypothetical score AS IF the
         # the target sequence were all that base
-        input_seq_hyp_scores_eachref[:, i, :] = np.sum(contrib, axis=1)
+        input_seq_hyp_scores_eachref[:, :, i] = np.sum(contrib, axis=2)
 
     # Average hypothetical scores across background references
     input_seq_hyp_scores = np.mean(input_seq_hyp_scores_eachref, axis=0)
@@ -102,7 +101,7 @@ def create_explainer(model, bg_size=10, task_index=None, use_logits=True):
         prev_output = model.layers[-2].output
         output = tf.matmul(prev_output, last_layer.kernel) + last_layer.bias
     
-    if task_index:
+    if task_index is not None:
         output = output[:, task_index : task_index + 1]
     output_sum = tf.reduce_sum(output, axis=1)
     explainer = shap.DeepExplainer(
