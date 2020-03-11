@@ -19,7 +19,8 @@ def suppress_stdout():
 
 
 def get_aitac_explainer(
-    model_path, num_classes, num_filters, input_length, normalize=False
+    model_path, num_classes, num_filters, input_length, normalize=False,
+    task_index=None
 ):
     import torch
     import aitac
@@ -33,12 +34,12 @@ def get_aitac_explainer(
 
     # Create explainer 
     return compute_shap.create_explainer(
-        model, input_length, task_index=None, normalize=normalize
+        model, input_length, task_index=task_index, normalize=normalize
     )
 
 
 def get_binarized_aitac_explainer(
-    model_arch_path, model_weights_path, use_logits=True
+    model_arch_path, model_weights_path, use_logits=True, task_index=None
 ):
     import keras
     import compute_binarized_shap
@@ -49,7 +50,7 @@ def get_binarized_aitac_explainer(
     model.load_weights(model_weights_path)
 
     return compute_binarized_shap.create_explainer(
-        model, task_index=None, use_logits=use_logits
+        model, task_index=task_index, use_logits=use_logits
     )
 
 
@@ -66,7 +67,11 @@ def get_binarized_aitac_explainer(
     "--normalize", "-n", is_flag=True,
     help="For non-binarized models, if specified, mean-normalize the output"
 )
-def main(outfile, binarized, use_logits, normalize):
+@click.option(
+    "--task-index", "-t", default=None,
+    help="If specified, only explain a particular task index"
+)
+def main(outfile, binarized, use_logits, normalize, task_index):
     import deeplift.visualization.viz_sequence as viz_sequence
     # Set paths/constants
     base_path = "/users/amtseng/tfmodisco/data/processed/AI-TAC/"
@@ -76,6 +81,9 @@ def main(outfile, binarized, use_logits, normalize):
     num_classes = 81
     num_filters = 300
     batch_size = 100
+
+    if task_index is not None:
+        task_index = int(task_index)
    
     # Define model paths, depending on the model type
     if binarized:
@@ -112,11 +120,13 @@ def main(outfile, binarized, use_logits, normalize):
     # Create explainer
     if binarized:
         explainer = get_binarized_aitac_explainer(
-            model_arch_path, model_weights_path, use_logits=use_logits
+            model_arch_path, model_weights_path, use_logits=use_logits,
+            task_index=task_index
         )
     else:
         explainer = get_aitac_explainer(
-            model_path, num_classes, num_filters, input_length, normalize=False
+            model_path, num_classes, num_filters, input_length, normalize=False,
+            task_index=task_index
         )
 
     hyp_scores = np.empty(one_hot_seqs.shape)  # Float array

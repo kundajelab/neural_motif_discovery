@@ -85,7 +85,7 @@ def combine_mult_and_diffref(mult, orig_inp, bg_data):
 
 
 class WrapperModel(torch.nn.Module):
-    def __init__(self, inner_model, task_index, normalize=False):
+    def __init__(self, inner_model, task_index=None, normalize=False):
         """
         Takes an AI-TAC model and constructs wrapper model around it. This model
         takes in the same input (i.e. input tensor of shape B x 4 x I). The
@@ -112,7 +112,7 @@ class WrapperModel(torch.nn.Module):
             mean = torch.mean(predictions, dim=1, keepdim=True)
             predictions = torch.abs(predictions - mean)
         
-        if self.task_index:
+        if self.task_index is not None:
             return predictions[:, self.task_index : (self.task_index + 1)]
         else:
             return torch.sum(predictions, dim=1, keepdim=True)
