@@ -113,6 +113,11 @@ def main(
     all_input_seqs = all_input_seqs[:num_seen]
     all_coords = all_coords[:num_seen]
 
+    # The coordinates need to be expanded/cut to the right input length
+    midpoints = (all_coords[:, 1] + all_coords[:, 2]) // 2
+    all_coords[:, 1] = midpoints - (input_length // 2)
+    all_coords[:, 2] = all_coords[:, 1] + input_length
+
     print("Saving result to HDF5...")
     os.makedirs(os.path.dirname(outfile), exist_ok=True)
     with h5py.File(outfile, "w") as f:

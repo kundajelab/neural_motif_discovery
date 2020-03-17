@@ -83,6 +83,12 @@ def get_predictions(
         all_log_pred_counts[batch_slice] = log_pred_counts
         all_true_profs[batch_slice] = true_profs
         all_true_counts[batch_slice] = true_counts
+
+    # The coordinates need to be expanded/cut to the right input length
+    midpoints = (all_coords[:, 1] + all_coords[:, 2]) // 2
+    all_coords[:, 1] = midpoints - (input_length // 2)
+    all_coords[:, 2] = all_coords[:, 1] + input_length
+
     return all_coords, all_log_pred_profs, all_log_pred_counts, \
         all_true_profs, all_true_counts
 

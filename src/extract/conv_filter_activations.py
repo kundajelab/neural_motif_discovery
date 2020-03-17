@@ -231,8 +231,11 @@ def compute_all_filter_predictions(
                 probabilities (N is the number of peaks, T is number of tasks,
                 O is profile length, 2 for each strand)
             `log_pred_counts`: N x T x 2 array of log counts
-        `filtered_coords`: M x 3 array of coordinates used to compute
-            activations and nullified predictions (subset of all peaks)
+        `filtered_coords`: contains coordinates used to compute activations and
+            nullified predictions (subset of all peaks)
+            `coords_chrom`: M-array of chromosome (string)
+            `coords_start`: M-array
+            `coords_end`: M-array
         `activations`: M x W x F array of activations (W is number of windows
             of the filter length in the input sequence, F is the number of
             filters)
@@ -291,9 +294,20 @@ def compute_all_filter_predictions(
     filtered_coords = filter_coordinates(
         coords, log_pred_profs, true_profs, true_counts
     )
+    filtered_coord_group = h5_file.create_group("filtered_coords")
+    filtered_coord_group.create_dataset(
+        "coords_chrom", data=filtered_coords[:, 0].astype("S"),
+        compression="gzip"
+    )
+    filtered_coord_group.create_dataset(
+        "coords_start", data=filtered_coords[:, 1].astype(int),
+        compression="gzip"
+    )
+    filtered_coord_group.create_dataset(
+        "coords_end", data=filtered_coords[:, 2].astype(int), compression="gzip"
+    )
 
     # Compute normal filter activations
-
     print("Computing filter activations...")
     activations = compute_filter_activations(
         model, files_spec_path, filtered_coords
