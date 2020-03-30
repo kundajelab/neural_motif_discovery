@@ -159,10 +159,13 @@ def compute_performance_bounds(
         probs = smoothed_profs / np.sum(smoothed_profs, axis=2, keepdims=True)
         return np.log(probs) 
     
+    # It's a little wasteful to compute all the metrics when we really only need
+    # a subset each time, but fuck it
+
     print("Computing lower bound performance for profiles...")
     lower_perf_prof_dict = profile_performance.compute_performance_metrics(
         true_profs, profs_to_log_prob_profs(true_profs_shuf_profile),
-        np.sum(rep1_profs, axis=2),
+        np.sum(true_profs, axis=2),
         np.log(np.sum(true_profs_shuf_profile, axis=2) + 1)
     )
     # Remove non-profile metrics
@@ -170,25 +173,30 @@ def compute_performance_bounds(
         if key.startswith("count_"):
             del lower_perf_prof_dict[key]
    
-    # It's a little wasteful to compute all the metrics when we really only need
-    # a subset each time, but fuck it
-
     print("Computing lower bound performance for counts...")
     lower_perf_count_dict = profile_performance.compute_performance_metrics(
         true_profs, profs_to_log_prob_profs(true_profs_shuf_count),
-        np.sum(rep1_profs, axis=2),
+        np.sum(true_profs, axis=2),
         np.log(np.sum(true_profs_shuf_count, axis=2) + 1)
     )
     # Remove non-count metrics
     for key in list(lower_perf_count_dict.keys()):
         if not key.startswith("count_"):
             del lower_perf_count_dict[key]
+
+    # Compute normalized NLL
+    lower_perf_prof_dict["norm_nll"] = lower_perf_prof_dict["nll"] / \
+        np.mean(np.sum(true_profs, axis=2), axis=2)
     
     print("Computing upper bound performance...")
     upper_perf_dict = profile_performance.compute_performance_metrics(
         rep1_profs, profs_to_log_prob_profs(rep2_profs),
         np.sum(rep1_profs, axis=2), np.log(np.sum(rep2_profs, axis=2) + 1)
     )
+    
+    # Compute normalized NLL
+    upper_perf_dict["norm_nll"] = upper_perf_dict["nll"] / \
+        np.mean(np.sum(rep1_profs, axis=2), axis=2)
 
     os.makedirs(os.path.dirname(out_hdf5), exist_ok=True)
     h5_file = h5py.File(out_hdf5, "w")
