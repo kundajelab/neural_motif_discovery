@@ -1,5 +1,5 @@
-# For each peak, picks the best model where that peak is in the test set, and
-# computes the profile prediction and peak performance metrics.
+# For each fold, picks the best model and computes the predictions and
+# performance metrics for all peaks.
 
 import os
 import model.train_profile_model as train_profile_model
@@ -99,16 +99,20 @@ def get_best_run(models_path):
 
 
 @peak_predict_ex.capture
-def predict_chrom_peaks(
-    model, chrom_set, files_spec_path, num_tasks, input_length, profile_length,
-    reference_fasta
+def run_predictions(
+    model, files_spec_path, num_tasks, input_length, profile_length,
+    reference_fasta, splits_json_path
 ):
     """
-    Given an imported model and a set of chromosomes, computes predictions for
-    all peaks in the set, and computes performance metrics.
+    Given an imported model, computes predictions for all peaks in the dataset,
+    and computes performance metrics.
     Returns the results of peak prediction and the dictionary of profile
     performance metrics.
     """
+    with open(splits_json_path, "r") as f:
+        splits = json.load(f)
+    chrom_set = splits["1"]["train"] + splits["1"]["val"] + splits["1"]["test"] 
+
     coords, log_pred_profs, log_pred_counts, true_profs, true_counts = \
         compute_predictions.get_predictions(
             model, files_spec_path, input_length, profile_length, num_tasks,
@@ -124,7 +128,7 @@ def predict_chrom_peaks(
 
 @peak_predict_ex.capture
 def predict_all_peaks(
-    models_path_stem, files_spec_path, num_tasks, out_hdf5_path,
+    models_path_stem, files_spec_path, num_tasks, out_hdf5_stem,
     profile_length, splits_json_path
 ):
     """
@@ -139,7 +143,7 @@ def predict_all_peaks(
             of runs
         `files_spec_path`: path to the JSON files spec for the model
         `num_tasks`: number of tasks in the model
-        `out_hdf5_path`: path to store results
+        `out_hdf5_stem`: path to store results
     Results will be saved in the specified HDF5, under the following keys:
         `fold{i}`:
             `coords`:
@@ -159,14 +163,12 @@ def predict_all_peaks(
     with open(splits_json_path, "r") as f:
         splits_json = json.load(f)
 
-    os.makedirs(os.path.dirname(out_hdf5_path), exist_ok=True)
-    h5_file = h5py.File(out_hdf5_path, "w")
-
     # Iterate through all splits, and run predictions for each test set
     for split in splits_json:
-        test_chroms = splits_json[split]["test"]
         print("Fold %s" % split)
-        print("Chroms: %s" % ", ".join(test_chroms))
+
+        os.makedirs(os.path.dirname(out_hdf5_stem), exist_ok=True)
+        h5_file = h5py.File(out_hdf5_stem + "_fold" + split + ".h5", "w")
 
         # Find the best model
         fold_path = models_path_stem + ("_fold%s" % split)
@@ -183,8 +185,8 @@ def predict_all_peaks(
         
         print("\tRunning predictions...")
         coords, log_pred_profs, log_pred_counts, true_profs, true_counts, \
-            perf_dict = predict_chrom_peaks(
-                model, test_chroms, files_spec_path, num_tasks
+            perf_dict = run_predictions(
+                model, files_spec_path, num_tasks
             )
 
         print("\tWriting to output...")
@@ -218,13 +220,13 @@ def predict_all_peaks(
                 key, data=perf_dict[key], compression="gzip"
             )
 
-    h5_file.close()
+        h5_file.close()
 
 
 @peak_predict_ex.command
-def run(models_path_stem, files_spec_path, num_tasks, out_hdf5_path):
+def run(models_path_stem, files_spec_path, num_tasks, out_hdf5_stem):
     predict_all_peaks(
-        models_path_stem, files_spec_path, num_tasks, out_hdf5_path
+        models_path_stem, files_spec_path, num_tasks, out_hdf5_stem
     )
 
 
@@ -233,7 +235,7 @@ def main():
     models_path_stem = "/users/amtseng/tfmodisco/models/trained_models/SPI1"
     files_spec_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/SPI1/SPI1_training_paths.json"
     num_tasks = 4
-    out_hdf5_path = "/users/amtseng/tfmodisco/results/peak_predictions/SPI1/SPI1_peak_prediction_performance.h5"
+    out_hdf5_stem = "/users/amtseng/tfmodisco/results/peak_predictions/SPI1/SPI1_peak_prediction_performance"
 
-    run(models_path_stem, files_spec_path, num_tasks, out_hdf5_path)
+    run(models_path_stem, files_spec_path, num_tasks, out_hdf5_stem)
 
