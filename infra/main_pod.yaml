@@ -1,17 +1,29 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: att-priors
+  name: tfmodisco
 spec:
   containers:
-  - name: att-priors 
-    image: kundajelab/att-priors:latest
-    args: ["sleep", "infinity"]
+  - name: tfmodisco
+    image: kundajelab/genome-keras-sacred:latest
+    imagePullPolicy: Always
+    resources:
+      requests:
+        cpu: 2
+        memory: 7Gi
+      limits:
+        cpu: 2
+        memory: 7Gi
+    command:
+    - /bin/bash
+    - -c
+    args:
+    - sleep infinity
     volumeMounts:
-    - mountPath: /amtseng_ceph
-      name: amtseng-ceph
+    - mountPath: /ceph
+      name: ceph
   volumes:
-    - name: amtseng-ceph
+    - name: ceph
       flexVolume:
         driver: ceph.rook.io/rook
         fsType: ceph

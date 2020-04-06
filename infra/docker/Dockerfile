@@ -1,16 +1,21 @@
-# Use the official PyTorch image as parent
-FROM pytorch/pytorch
+# Use the official TensorFlow image as parent
+FROM tensorflow/tensorflow:1.14.0-gpu-py3
 
 # Set the working directory
-WORKDIR /att_priors
+WORKDIR /scratch
 
 # Copy the set of requirements for training
-COPY train_requirements.txt /att_priors
+COPY train_requirements.txt /scratch
 
-# Install any needed packages specified in requirements.txt, and others
+# Install any needed packages specified in requirements.txt
 RUN pip install -r train_requirements.txt
-RUN git clone https://github.com/atseng95/sacred.git
-RUN cd sacred && python setup.py install
+
+# Install DeepSHAP
+ADD shap /scratch/shap
+RUN pip install -e shap
+
+# Create /users/amtseng directory
+RUN mkdir -p /users/amtseng
 
 # Set environment variables for Python
 ENV LC_ALL=C.UTF-8
