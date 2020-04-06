@@ -19,6 +19,9 @@ def config():
     # Length of output profiles
     profile_length = 1000
 
+    # Path to canonical chromosomes
+    chrom_sizes_tsv = "/users/amtseng/genomes/hg38.canon.chrom.sizes"
+
 
 @bound_perf_ex.capture
 def import_peak_coordinates(files_spec_path, profile_length, chrom_set=None):
@@ -230,8 +233,15 @@ def compute_performance_bounds(
 
 
 @bound_perf_ex.command
-def run(files_spec_path, replicate_prof_hdf5, out_hdf5_path, chrom_set=None):
-    if type(chrom_set) is str:
+def run(
+    files_spec_path, replicate_prof_hdf5, out_hdf5_path, chrom_sizes_tsv,
+    chrom_set=None
+):
+    if not chrom_set:
+        # By default, use all canonical chromosomes
+        with open(chrom_sizes_tsv, "r") as f:
+            chrom_set = [line.split("\t")[0] for line in f]
+    elif type(chrom_set) is str:
         chrom_set = chrom_set.split(",")
 
     compute_performance_bounds(
