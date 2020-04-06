@@ -230,7 +230,7 @@ def compute_performance_bounds(
 
 
 @bound_perf_ex.command
-def run(files_spec_path, replicate_prof_hdf5, chrom_set, out_hdf5_path):
+def run(files_spec_path, replicate_prof_hdf5, out_hdf5_path, chrom_set=None):
     if type(chrom_set) is str:
         chrom_set = chrom_set.split(",")
 
@@ -242,8 +242,7 @@ def run(files_spec_path, replicate_prof_hdf5, chrom_set, out_hdf5_path):
 @bound_perf_ex.automain
 def main():
     files_spec_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/SPI1/SPI1_training_paths.json"
-    replicate_prof_hdf5 = "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/SPI1/SPI1_replicate_profiles.h5"
-    chrom_set = ["chr21", "chr22"]
+    replicate_prof_hdf5 = "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/SPI1/SPI1_pseudorep.h5"
     out_hdf5_path = "/users/amtseng/tfmodisco/results/performance_bounds/SPI1/SPI1_performance_bounds.h5"
 
-    run(files_spec_path, replicate_prof_hdf5, chrom_set, out_hdf5_path)
+    run(files_spec_path, replicate_prof_hdf5, out_hdf5_path)
