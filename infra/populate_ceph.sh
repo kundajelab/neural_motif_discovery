@@ -15,7 +15,8 @@ case "$resp" in
 esac
 
 echo "Copying initial scripts..."
-kubectl cp $stem/tfmodisco/infra/run_aggregate_shap.py $podname:$ceph
+kubectl cp $stem/tfmodisco/infra/run_shap.py $podname:$ceph
+kubectl cp $stem/tfmodisco/infra/run_preds.py $podname:$ceph
 
 echo "Copying source code..."
 kubectl exec $podname -- mkdir -p $ceph/$stem/tfmodisco/
