@@ -1,4 +1,4 @@
-from deeplift.dinuc_shuffle import dinuc_shuffle
+from extract.dinuc_shuffle import dinuc_shuffle
 import shap
 import tensorflow as tf
 import numpy as np

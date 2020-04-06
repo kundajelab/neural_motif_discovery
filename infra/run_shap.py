@@ -56,6 +56,10 @@ def copy_data(tf_name, model_path, file_specs_json_path, num_tasks):
     sys.stdout.flush()
     copy_item("/users/amtseng/tfmodisco/src/", directory=True)
 
+    print("Copying model...")
+    sys.stdout.flush()
+    copy_item(model_path)
+
 
 @click.command()
 @click.option("--tf-name", "-t", required=True, help="Name of TF")
@@ -71,7 +75,11 @@ def copy_data(tf_name, model_path, file_specs_json_path, num_tasks):
 @click.option(
     "--num-tasks", "-n", required=True, type=int, help="Number of tasks"
 )
-def main(tf_name, fold_num, run_num, epoch_num, num_tasks):
+@click.option(
+    "--task-index", "-i", default=None, type=int,
+    help="Task index; default is aggregate"
+)
+def main(tf_name, fold_num, run_num, epoch_num, num_tasks, task_index):
     # First check that we are inside a container
     assert os.path.exists("/.dockerenv")
 
@@ -87,11 +95,14 @@ def main(tf_name, fold_num, run_num, epoch_num, num_tasks):
         tf_name,
         "%s_training_paths.json" % tf_name
     )
+    if task_index is not None:
+        out_file_name = "%s_shap_scores_fold%d_task%d.h5" % (tf_name, fold_num, task_index)
+    else:
+        out_file_name = "%s_shap_scores_fold%d.h5" % (tf_name, fold_num)
     out_path = os.path.join(
         "/users/amtseng/tfmodisco/results/shap_scores/",
         tf_name,
-        "all_folds",
-        "%s_shap_scores_fold%d.h5" % (tf_name, fold_num)
+        out_file_name
     )
 
     # Copy over the data
@@ -99,11 +110,13 @@ def main(tf_name, fold_num, run_num, epoch_num, num_tasks):
 
     # Go to the right directory and run `make_single_model_shap_scores.py`
     os.chdir("/users/amtseng/tfmodisco/src")
-    comm = ["python", "-m", "tfmodisco.make_single_model_shap_scores"]
+    comm = ["python", "-m", "tfmodisco.make_shap_scores"]
     comm += ["-m", model_path]
     comm += ["-f", file_specs_json_path]
     comm += ["-n", str(num_tasks)]
     comm += ["-o", out_path]
+    if task_index is not None:
+        comm += ["-i", str(task_index)]
     
     print("Beginning DeepSHAP computation...")
     sys.stdout.flush()
