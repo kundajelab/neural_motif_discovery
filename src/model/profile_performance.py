@@ -44,7 +44,9 @@ def multinomial_log_probs(category_log_probs, trials, query_counts):
     return log_n_fact - log_counts_fact_sum + log_prob_pows_sum
 
 
-def profile_multinomial_nll(true_profs, log_pred_profs, true_counts):
+def profile_multinomial_nll(
+    true_profs, log_pred_profs, true_counts, batch_size=200
+):
     """
     Computes the negative log likelihood of seeing the true profile, given the
     probabilities specified by the predicted profile. The NLL is computed
@@ -59,18 +61,30 @@ def profile_multinomial_nll(true_profs, log_pred_profs, true_counts):
             profiles for each task and strand, as LOG probabilities
         `true_counts`: a N x T x 2 array, containing the true total counts
             for each task and strand
+        `batch_size`: performs computation in a batch size of this many samples
     Returns an N x T array, containing the strand-pooled multinomial NLL for
     each sample and task.
     """
     num_samples = true_profs.shape[0]
     num_tasks = true_profs.shape[1]
+    nlls = np.empty((num_samples, num_tasks))
 
-    # Swap axes on profiles to make them N x T x 2 x O
-    true_profs = np.swapaxes(true_profs, 2, 3)
-    log_pred_profs = np.swapaxes(log_pred_profs, 2, 3)
+    for start in range(0, num_samples, batch_size):
+        end = start + batch_size
+        true_profs_batch = true_profs[start:end]
+        log_pred_profs_batch = log_pred_profs[start:end]
+        true_counts_batch = true_counts[start:end]
 
-    nll = -multinomial_log_probs(log_pred_profs, true_counts, true_profs)
-    return np.mean(nll, axis=2)  # Average strands
+        # Swap axes on profiles to make them B x T x 2 x O
+        true_profs_batch = np.swapaxes(true_profs_batch, 2, 3)
+        log_pred_profs_batch = np.swapaxes(log_pred_profs_batch, 2, 3)
+
+        nll_batch = -multinomial_log_probs(
+            log_pred_profs_batch, true_counts_batch, true_profs_batch
+        )
+        nll_batch_mean = np.mean(nll_batch, axis=2)  # Shape: B x T
+        nlls[start:end] = nll_batch_mean
+    return nlls
 
 
 def _kl_divergence(probs1, probs2):
@@ -117,7 +131,7 @@ def jensen_shannon_distance(probs1, probs2):
 @performance_ex.capture
 def profile_jsd(
     true_prof_probs, pred_prof_probs, prof_smooth_kernel_sigma,
-    prof_smooth_kernel_width
+    prof_smooth_kernel_width, batch_size=200
 ):
     """
     Computes the Jensen-Shannon divergence of the true and predicted profiles
@@ -132,28 +146,40 @@ def profile_jsd(
         `pred_prof_probs`: N x T x O x 2 array, containing the predicted
             profiles for each task and strand, as RAW PROBABILITIES or RAW
             COUNTS
+        `batch_size`: performs computation in a batch size of this many samples
     Returns an N x T array, where the JSD is computed across the profiles and
     averaged between the strands, for each sample/task.
     """
-    # Transpose to N x T x 2 x O, as JSD is computed along last dimension
-    true_prof_swap = np.swapaxes(true_prof_probs, 2, 3)
-    pred_prof_swap = np.swapaxes(pred_prof_probs, 2, 3)
+    num_samples = true_prof_probs.shape[0]
+    num_tasks = true_prof_probs.shape[1]
+    jsds = np.empty((num_samples, num_tasks))
 
-    # Smooth the profiles
-    if prof_smooth_kernel_width == 0:
-        sigma, truncate = 1, 0
-    else:
-        sigma = prof_smooth_kernel_sigma
-        truncate = (prof_smooth_kernel_width - 1) / (2 * sigma)
-    true_prof_smooth = scipy.ndimage.gaussian_filter1d(
-        true_prof_swap, sigma, axis=-1, truncate=truncate
-    )
-    pred_prof_smooth = scipy.ndimage.gaussian_filter1d(
-        pred_prof_swap, sigma, axis=-1, truncate=truncate
-    )
+    for start in range(0, num_samples, batch_size):
+        end = start + batch_size
+        true_prof_probs_batch = true_prof_probs[start:end]
+        pred_prof_probs_batch = pred_prof_probs[start:end]
 
-    jsd = jensen_shannon_distance(true_prof_smooth, pred_prof_smooth)
-    return np.mean(jsd, axis=-1)  # Average over strands
+        # Transpose to B x T x 2 x O, as JSD is computed along last dimension
+        true_prof_swap = np.swapaxes(true_prof_probs_batch, 2, 3)
+        pred_prof_swap = np.swapaxes(pred_prof_probs_batch, 2, 3)
+
+        # Smooth the profiles
+        if prof_smooth_kernel_width == 0:
+            sigma, truncate = 1, 0
+        else:
+            sigma = prof_smooth_kernel_sigma
+            truncate = (prof_smooth_kernel_width - 1) / (2 * sigma)
+        true_prof_smooth = scipy.ndimage.gaussian_filter1d(
+            true_prof_swap, sigma, axis=-1, truncate=truncate
+        )
+        pred_prof_smooth = scipy.ndimage.gaussian_filter1d(
+            pred_prof_swap, sigma, axis=-1, truncate=truncate
+        )
+
+        jsd_batch = jensen_shannon_distance(true_prof_smooth, pred_prof_smooth)
+        jsd_batch_mean = np.mean(jsd_batch, axis=-1)  # Average over strands
+        jsds[start:end] = jsd_batch_mean
+    return jsds
 
 
 def pearson_corr(arr1, arr2):
@@ -255,7 +281,7 @@ def mean_squared_error(arr1, arr2):
 @performance_ex.capture
 def profile_corr_mse(
     true_prof_probs, pred_prof_probs, prof_smooth_kernel_sigma,
-    prof_smooth_kernel_width, batch_size=1000
+    prof_smooth_kernel_width, batch_size=200
 ):
     """
     Returns the correlations of the true and predicted PROFILE counts (i.e.
@@ -271,38 +297,38 @@ def profile_corr_mse(
     counts). Correlations/MSE are computed for each sample/task (strands are
     pooled together).
     """
-    # Smooth the profiles
-    if prof_smooth_kernel_width == 0:
-        sigma, truncate = 1, 0
-    else:
-        sigma = prof_smooth_kernel_sigma
-        truncate = (prof_smooth_kernel_width - 1) / (2 * sigma)
-    true_prof_smooth = scipy.ndimage.gaussian_filter1d(
-        true_prof_probs, sigma, axis=2, truncate=truncate
-    )
-    pred_prof_smooth = scipy.ndimage.gaussian_filter1d(
-        pred_prof_probs, sigma, axis=2, truncate=truncate
-    )
-
     num_samples, num_tasks = true_prof_probs.shape[:2]
     pears = np.zeros((num_samples, num_tasks))
     spear = np.zeros((num_samples, num_tasks))
     mse = np.zeros((num_samples, num_tasks))
 
-    # Combine the profile length and strand dimensions (i.e. pool strands)
-    new_shape = (num_samples, num_tasks, -1)
-    true_prof_probs_flat = np.reshape(true_prof_smooth, new_shape)
-    pred_prof_probs_flat = np.reshape(pred_prof_smooth, new_shape)
+    if prof_smooth_kernel_width == 0:
+        sigma, truncate = 1, 0
+    else:
+        sigma = prof_smooth_kernel_sigma
+        truncate = (prof_smooth_kernel_width - 1) / (2 * sigma)
 
     for start in range(0, num_samples, batch_size):
         end = start + batch_size
-        true_batch = true_prof_probs_flat[start:end, :, :]
-        pred_batch = pred_prof_probs_flat[start:end, :, :]
+        true_batch = true_prof_probs[start:end]  # Shapes: B x T x O x 2
+        pred_batch = pred_prof_probs[start:end]
 
-        pears[start:end, :] = pearson_corr(true_batch, pred_batch)
-        x = spearman_corr(true_batch, pred_batch)
-        spear[start:end, :] = spearman_corr(true_batch, pred_batch)
-        mse[start:end, :] = mean_squared_error(true_batch, pred_batch)
+        # Smooth along the output profile length
+        true_smooth = scipy.ndimage.gaussian_filter1d(
+            true_batch, sigma, axis=2, truncate=truncate
+        )
+        pred_smooth = scipy.ndimage.gaussian_filter1d(
+            pred_batch, sigma, axis=2, truncate=truncate
+        )
+
+        # Flatten by pooling strands
+        new_shape = (true_batch.shape[0], num_tasks, -1)
+        true_flat = np.reshape(true_smooth, new_shape)
+        pred_flat = np.reshape(pred_smooth, new_shape)
+
+        pears[start:end] = pearson_corr(true_flat, pred_flat)
+        spear[start:end] = spearman_corr(true_flat, pred_flat)
+        mse[start:end] = mean_squared_error(true_flat, pred_flat)
 
     return pears, spear, mse
 
