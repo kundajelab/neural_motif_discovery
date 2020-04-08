@@ -4,6 +4,7 @@ import os
 import model.train_profile_model as train_profile_model
 import model.profile_performance as profile_performance
 import extract.compute_predictions as compute_predictions
+import extract.data_loading as data_loading
 import keras
 import sacred
 import numpy as np
@@ -52,7 +53,8 @@ def import_model(model_path, num_tasks, profile_length):
 @peak_predict_ex.capture
 def predict_peaks(
     model_path, files_spec_path, num_tasks, out_hdf5_path, chrom_set,
-    input_length, profile_length, reference_fasta, chrom_sizes_tsv
+    input_length, profile_length, reference_fasta, chrom_sizes_tsv,
+    batch_size=128
 ):
     """
     Given a model path, computes all peak predictions and performance metrics.
@@ -64,6 +66,7 @@ def predict_peaks(
         `out_hdf5_path`: path to store results
         `chrom_set`: set of chromosomes to use; if None, use all canonical
             chromosomes
+        `batch_size`: batch size for running predictions/performance
     Results will be saved in the specified HDF5, under the following keys:
         `coords`:
             `coords_chrom`: N-array of chromosome (string)
@@ -83,52 +86,131 @@ def predict_peaks(
         with open(chrom_sizes_tsv, "r") as f:
             chrom_set = [line.split("\t")[0] for line in f]
 
-    os.makedirs(os.path.dirname(out_hdf5_path), exist_ok=True)
-    h5_file = h5py.File(out_hdf5_path, "w")
-
     print("\tImporting model...")
     model = import_model(model_path, num_tasks, profile_length)
-    
-    print("\tRunning predictions...")
-    coords, log_pred_profs, log_pred_counts, true_profs, true_counts = \
-        compute_predictions.get_predictions(
-            model, files_spec_path, input_length, profile_length, num_tasks,
-            reference_fasta, chrom_set=chrom_set
-        )
-    
-    perf_dict = profile_performance.compute_performance_metrics(
-        true_profs, log_pred_profs, true_counts, log_pred_counts
+
+    # Create data loading function and get all peak coordinates
+    input_func = data_loading.get_input_func(
+        files_spec_path, input_length, profile_length, reference_fasta
     )
- 
-    print("\tWriting to output...")
+    coords = data_loading.get_positive_inputs(
+        files_spec_path, chrom_set=chrom_set
+    )
+    num_examples = len(coords)
+
+    print("\tCreating HDF5")
+    os.makedirs(os.path.dirname(out_hdf5_path), exist_ok=True)
+    h5_file = h5py.File(out_hdf5_path, "w")
     coord_group = h5_file.create_group("coords")
     pred_group = h5_file.create_group("predictions")
     perf_group = h5_file.create_group("performance")
-    coord_group.create_dataset(
-        "coords_chrom", data=coords[:, 0].astype("S"), compression="gzip"
+    coords_chrom_dset = coord_group.create_dataset(
+        "coords_chrom", (num_examples,),
+        dtype=h5py.string_dtype(encoding="ascii"), compression="gzip"
     )
-    coord_group.create_dataset(
-        "coords_start", data=coords[:, 1].astype(int), compression="gzip"
+    coords_start_dset = coord_group.create_dataset(
+        "coords_start", (num_examples,), dtype=int, compression="gzip"
     )
-    coord_group.create_dataset(
-        "coords_end", data=coords[:, 2].astype(int), compression="gzip"
+    coords_end_dset = coord_group.create_dataset(
+        "coords_end", (num_examples,), dtype=int, compression="gzip"
     )
-    pred_group.create_dataset(
-        "log_pred_profs", data=log_pred_profs, compression="gzip"
+    log_pred_profs_dset = pred_group.create_dataset(
+        "log_pred_profs", (num_examples, num_tasks, profile_length, 2),
+        dtype=float, compression="gzip"
     )
-    pred_group.create_dataset(
-        "log_pred_counts", data=log_pred_counts, compression="gzip"
+    log_pred_counts_dset = pred_group.create_dataset(
+        "log_pred_counts", (num_examples, num_tasks, 2), dtype=float,
+        compression="gzip"
     )
-    pred_group.create_dataset(
-        "true_profs", data=true_profs, compression="gzip"
+    true_profs_dset = pred_group.create_dataset(
+        "true_profs", (num_examples, num_tasks, profile_length, 2), dtype=float,
+        compression="gzip"
     )
-    pred_group.create_dataset(
-        "true_counts", data=true_counts, compression="gzip"
+    true_counts_dset = pred_group.create_dataset(
+        "true_counts", (num_examples, num_tasks, 2), dtype=float,
+        compression="gzip"
     )
-    for key in perf_dict:
-        perf_group.create_dataset(
-            key, data=perf_dict[key], compression="gzip"
+    nll_dset = perf_group.create_dataset(
+        "nll", (num_examples, num_tasks), dtype=float, compression="gzip"
+    )
+    jsd_dset = perf_group.create_dataset(
+        "jsd", (num_examples, num_tasks), dtype=float, compression="gzip"
+    )
+    profile_pearson_dset = perf_group.create_dataset(
+        "profile_pearson", (num_examples, num_tasks), dtype=float,
+        compression="gzip"
+    )
+    profile_spearman_dset = perf_group.create_dataset(
+        "profile_spearman", (num_examples, num_tasks), dtype=float,
+        compression="gzip"
+    )
+    profile_mse_dset = perf_group.create_dataset(
+        "profile_mse", (num_examples, num_tasks), dtype=float, compression="gzip"
+    )
+    count_pearson_dset = perf_group.create_dataset(
+        "count_pearson", (num_tasks,), dtype=float, compression="gzip"
+    )
+    count_spearman_dset = perf_group.create_dataset(
+        "count_spearman", (num_tasks,), dtype=float, compression="gzip"
+    )
+    count_mse_dset = perf_group.create_dataset(
+        "count_mse", (num_tasks,), dtype=float, compression="gzip"
+    )
+
+    # Collect the true/predicted total counts; we need these to compute
+    # performance metrics over all counts together
+    all_true_counts = np.empty((num_examples, num_tasks, 2))
+    all_log_pred_counts = np.empty((num_examples, num_tasks, 2))
+
+    print("\tRunning predictions...")
+    num_batches = int(np.ceil(num_examples / batch_size))
+    for i in tqdm.trange(num_batches):
+        batch_slice = slice(i * batch_size, (i + 1) * batch_size)
+        coords_batch = coords[batch_slice]
+
+        # Get predictions
+        log_pred_profs, log_pred_counts, true_profs, true_counts = \
+            compute_predictions.get_predictions_batch(
+                model, coords_batch, input_func
+            )
+        
+        # Get performance
+        perf_dict = profile_performance.compute_performance_metrics(
+            true_profs, log_pred_profs, true_counts, log_pred_counts,
+            print_updates=False
         )
+
+        # Pad coordinates to the right input length
+        midpoints = (coords_batch[:, 1] + coords_batch[:, 2]) // 2
+        coords_batch[:, 1] = midpoints - (input_length // 2)
+        coords_batch[:, 2] = coords_batch[:, 1] + input_length
+
+        # Write to HDF5
+        coords_chrom_dset[batch_slice] = coords_batch[:, 0].astype("S")
+        coords_start_dset[batch_slice] = coords_batch[:, 1].astype(int)
+        coords_end_dset[batch_slice] = coords_batch[:, 2].astype(int)
+        log_pred_profs_dset[batch_slice] = log_pred_profs
+        log_pred_counts_dset[batch_slice] = log_pred_counts
+        true_profs_dset[batch_slice] = true_profs
+        true_counts_dset[batch_slice] = true_counts
+        nll_dset[batch_slice] = perf_dict["nll"]
+        jsd_dset[batch_slice] = perf_dict["jsd"]
+        profile_pearson_dset[batch_slice] = perf_dict["profile_pearson"]
+        profile_spearman_dset[batch_slice] = perf_dict["profile_spearman"]
+        profile_mse_dset[batch_slice] = perf_dict["profile_mse"]
+
+        # Save the total counts
+        all_true_counts[batch_slice] = true_counts
+        all_log_pred_counts[batch_slice] = log_pred_counts
+
+    print("\tComputing count performance metrics...")
+    all_log_true_counts = np.log(all_true_counts + 1)
+    count_pears, count_spear, count_mse = profile_performance.count_corr_mse(
+        all_log_true_counts, all_log_pred_counts
+    )
+    count_pearson_dset[:] = count_pears
+    count_spearman_dset[:] = count_spear
+    count_mse_dset[:] = count_mse
 
     h5_file.close()
 
