@@ -93,7 +93,7 @@ def main(
     num_batches = len(enq.sequence)
     num_expected = num_batches * batch_size
     # Allocate arrays to hold results
-    hyp_scores = np.empty((num_expected, input_length, 4))
+    all_hyp_scores = np.empty((num_expected, input_length, 4))
     all_input_seqs = np.empty((num_expected, input_length, 4))
     all_coords = np.empty((num_expected, 3), dtype=object)
     num_seen = 0
@@ -102,30 +102,49 @@ def main(
         cont_profs = profiles[:, num_tasks:]
         num_in_batch = len(input_seqs)
         start, end = num_seen, num_seen + num_in_batch
-        hyp_scores[start:end] = explainer(input_seqs, cont_profs)
+        all_hyp_scores[start:end] = explainer(input_seqs, cont_profs)
         all_input_seqs[start:end] = input_seqs
+
+        # Expand/cut coordinates to right input length
+        midpoints = (coords[:, 1] + coords[:, 2]) // 2
+        coords[:, 1] = midpoints - (input_length // 2)
+        coords[:, 2] = coords[:, 1] + input_length
+
         all_coords[start:end] = coords
         num_seen += num_in_batch
     enq.stop()
 
-    # Cut off excess
-    hyp_scores = hyp_scores[:num_seen]
-    all_input_seqs = all_input_seqs[:num_seen]
-    all_coords = all_coords[:num_seen]
-
-    # The coordinates need to be expanded/cut to the right input length
-    midpoints = (all_coords[:, 1] + all_coords[:, 2]) // 2
-    all_coords[:, 1] = midpoints - (input_length // 2)
-    all_coords[:, 2] = all_coords[:, 1] + input_length
-
     print("Saving result to HDF5...")
     os.makedirs(os.path.dirname(outfile), exist_ok=True)
     with h5py.File(outfile, "w") as f:
-        f.create_dataset("coords_chrom", data=all_coords[:, 0].astype("S"))
-        f.create_dataset("coords_start", data=all_coords[:, 1].astype(int))
-        f.create_dataset("coords_end", data=all_coords[:, 2].astype(int))
-        f.create_dataset("hyp_scores", data=hyp_scores)
-        f.create_dataset("input_seqs", data=all_input_seqs)
+        coords_chrom_dset = f.create_dataset(
+            "coords_chrom", (num_seen,),
+            dtype=h5py.string_dtype(encoding="ascii"), compression="gzip"
+        )
+        coords_start_dset = f.create_dataset(
+            "coords_start", (num_seen,), dtype=int, compression="gzip"
+        )
+        coords_end_dset = f.create_dataset(
+            "coords_end", (num_seen,), dtype=int, compression="gzip"
+        )
+        hyp_scores_dset = f.create_dataset(
+            "hyp_scores", (num_seen, input_length, 4), compression="gzip"
+        )
+        input_seqs_dset = f.create_dataset(
+            "input_seqs", (num_seen, input_length, 4), compression="gzip"
+        )
+
+        num_batches = int(np.ceil(num_seen / batch_size))
+        for i in tqdm.trange(num_batches):
+            start = i * batch_size
+            end = min(start + batch_size, num_seen)
+
+            coords = all_coords[start:end]
+            coords_chrom_dset[start:end] = coords[:, 0].astype("S")
+            coords_start_dset[start:end] = coords[:, 1].astype(int)
+            coords_end_dset[start:end] = coords[:, 2].astype(int)
+            hyp_scores_dset[start:end] = all_hyp_scores[start:end]
+            input_seqs_dset[start:end] = all_input_seqs[start:end]
         model = f.create_dataset("model", data=0)
         model.attrs["model"] = model_path
 
