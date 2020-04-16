@@ -48,17 +48,17 @@ do
 	# 2) Filter the BAMs for quality and mappability
 	printf "\tFiltering BAMs\n"
 	samtools view -F 780 -q 30 -b $rep1bam -o $tempdir/$rep1name.filt
-	samtools view -F 780 -q 30 -b $rep1bam -o $tempdir/$rep2name.filt
+	samtools view -F 780 -q 30 -b $rep2bam -o $tempdir/$rep2name.filt
 
 	# 3) Merge the BAMs and convert to shuffled SAM
 	printf "\tMerging and shuffling\n"
-	samtools merge - $tempdir/$rep1name.filt $tempdir/$rep2name.filt -u > $tempdir/pooled.sam
-	samtools view $tempdir/pooled.sam -H > $tempdir/header.sam
-	samtools view $tempdir/pooled.sam | shuf > $tempdir/pooled_shuf.sam
+	samtools merge - $tempdir/$rep1name.filt $tempdir/$rep2name.filt > $tempdir/pooled.bam
+	samtools view $tempdir/pooled.bam -H > $tempdir/header.sam
+	samtools view $tempdir/pooled.bam | shuf > $tempdir/pooled_shuf.sam  # Just the reads, shuffled
 
 	# 4) Split pooled reads into pseudoreplicates and convert back to BAMs
 	printf "\tSplitting into pseudoreplicate BAMs\n"
-	count=$(cat $tempdir/pooled.sam | wc -l)
+	count=$(cat $tempdir/pooled_shuf.sam | wc -l)
 	firsthalfcount=$(echo "$count / 2" | bc)
 	secondhalfcount=$(echo "$count - $firsthalfcount" | bc)
 	cat $tempdir/header.sam <(head -n $firsthalfcount $tempdir/pooled_shuf.sam) | samtools view -S -b - > $tempdir/pseudorep1.bam
