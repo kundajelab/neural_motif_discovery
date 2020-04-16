@@ -5,6 +5,7 @@ import model.train_profile_model as train_profile_model
 import feature.make_profile_dataset as make_profile_dataset
 import keras.utils
 import extract.compute_shap as compute_shap
+import extract.data_loading as data_loading
 import tqdm
 import os
 import h5py
@@ -71,6 +72,12 @@ def main(
         model_path, num_tasks, profile_length
     )
 
+    # Get set of positive coordinates
+    all_pos_coords = data_loading.get_positive_inputs(
+        files_spec_path, chrom_set=chrom_set
+    )
+    num_coords = len(all_pos_coords)
+
     # Make data loader
     batch_size = 128
     data_loader = make_profile_dataset.create_data_loader(
@@ -86,67 +93,56 @@ def main(
     enq.start(workers, queue_size)
     para_batch_gen = enq.get()
 
-    # Make explainers
+    # Make explainer
     explainer = compute_shap.create_explainer(model, task_index=task_index)
 
+    # Create the datasets in the HDF5
+    os.makedirs(os.path.dirname(outfile), exist_ok=True)
+    f = h5py.File(outfile, "w")
+    coords_chrom_dset = f.create_dataset(
+        "coords_chrom", (num_coords,),
+        dtype=h5py.string_dtype(encoding="ascii"), compression="gzip"
+    )
+    coords_start_dset = f.create_dataset(
+        "coords_start", (num_coords,), dtype=int, compression="gzip"
+    )
+    coords_end_dset = f.create_dataset(
+        "coords_end", (num_coords,), dtype=int, compression="gzip"
+    )
+    hyp_scores_dset = f.create_dataset(
+        "hyp_scores", (num_coords, input_length, 4), compression="gzip"
+    )
+    input_seqs_dset = f.create_dataset(
+        "input_seqs", (num_coords, input_length, 4), compression="gzip"
+    )
+    model = f.create_dataset("model", data=0)
+    model.attrs["model"] = model_path
+
     print("Computing importance scores...")
-    num_batches = len(enq.sequence)
-    num_expected = num_batches * batch_size
-    # Allocate arrays to hold results
-    all_hyp_scores = np.empty((num_expected, input_length, 4))
-    all_input_seqs = np.empty((num_expected, input_length, 4))
-    all_coords = np.empty((num_expected, 3), dtype=object)
     num_seen = 0
     for i in tqdm.trange(len(enq.sequence)):
         input_seqs, profiles, status, coords, peaks = next(para_batch_gen)
         cont_profs = profiles[:, num_tasks:]
         num_in_batch = len(input_seqs)
         start, end = num_seen, num_seen + num_in_batch
-        all_hyp_scores[start:end] = explainer(input_seqs, cont_profs)
-        all_input_seqs[start:end] = input_seqs
+
+        assert np.all(coords[:, 0] == all_pos_coords[start:end, 0])
+        assert np.all(coords[:, 1] == all_pos_coords[start:end, 1])
+        assert np.all(coords[:, 2] == all_pos_coords[start:end, 2])
 
         # Expand/cut coordinates to right input length
         midpoints = (coords[:, 1] + coords[:, 2]) // 2
         coords[:, 1] = midpoints - (input_length // 2)
         coords[:, 2] = coords[:, 1] + input_length
 
-        all_coords[start:end] = coords
+        hyp_scores_dset[start:end] = explainer(input_seqs, cont_profs)
+        input_seqs_dset[start:end] = input_seqs
+        coords_chrom_dset[start:end] = coords[:, 0].astype("S")
+        coords_start_dset[start:end] = coords[:, 1].astype(int)
+        coords_end_dset[start:end] = coords[:, 2].astype(int)
         num_seen += num_in_batch
     enq.stop()
 
-    print("Saving result to HDF5...")
-    os.makedirs(os.path.dirname(outfile), exist_ok=True)
-    with h5py.File(outfile, "w") as f:
-        coords_chrom_dset = f.create_dataset(
-            "coords_chrom", (num_seen,),
-            dtype=h5py.string_dtype(encoding="ascii"), compression="gzip"
-        )
-        coords_start_dset = f.create_dataset(
-            "coords_start", (num_seen,), dtype=int, compression="gzip"
-        )
-        coords_end_dset = f.create_dataset(
-            "coords_end", (num_seen,), dtype=int, compression="gzip"
-        )
-        hyp_scores_dset = f.create_dataset(
-            "hyp_scores", (num_seen, input_length, 4), compression="gzip"
-        )
-        input_seqs_dset = f.create_dataset(
-            "input_seqs", (num_seen, input_length, 4), compression="gzip"
-        )
-
-        num_batches = int(np.ceil(num_seen / batch_size))
-        for i in tqdm.trange(num_batches):
-            start = i * batch_size
-            end = min(start + batch_size, num_seen)
-
-            coords = all_coords[start:end]
-            coords_chrom_dset[start:end] = coords[:, 0].astype("S")
-            coords_start_dset[start:end] = coords[:, 1].astype(int)
-            coords_end_dset[start:end] = coords[:, 2].astype(int)
-            hyp_scores_dset[start:end] = all_hyp_scores[start:end]
-            input_seqs_dset[start:end] = all_input_seqs[start:end]
-        model = f.create_dataset("model", data=0)
-        model.attrs["model"] = model_path
 
 if __name__ == "__main__":
     main()
