@@ -94,7 +94,7 @@ def filter_coordinates(
     avg_norm_nll = np.mean(norm_nll, axis=(1, 2))
 
     # Only keep top `keep_num` coordinates
-    return coords[np.flip(np.argsort(avg_norm_nll))[:coord_keep_num]]
+    return coords[np.argsort(avg_norm_nll)[:coord_keep_num]]
 
 
 @conv_filter_ex.capture
@@ -353,9 +353,9 @@ def run(model_path, files_spec_path, num_tasks, out_hdf5_path):
 
 @conv_filter_ex.automain
 def main():
-    files_spec_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/SPI1/SPI1_training_paths.json"
-    model_path = "/users/amtseng/tfmodisco/models/trained_models/SPI1_fold1/1/model_ckpt_epoch_8.h5"
-    num_tasks = 4
-    out_hdf5_path = "/users/amtseng/tfmodisco/results/filter_activations/SPI1/SPI1_filter_activations.h5"
+    files_spec_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/E2F6/E2F6_training_paths.json"
+    model_path = "/users/amtseng/tfmodisco/models/trained_models/E2F6_fold4/2/model_ckpt_epoch_8.h5"
+    num_tasks = 2
+    out_hdf5_path = "/users/amtseng/tfmodisco/results/filter_activations/E2F6/E2F6_filter_activations_2.h5"
 
     run(model_path, files_spec_path, num_tasks, out_hdf5_path)
