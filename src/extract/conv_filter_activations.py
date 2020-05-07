@@ -62,22 +62,17 @@ def import_model(model_path, num_tasks, profile_length):
     return keras.models.load_model(model_path, custom_objects=custom_objects)
 
 
-@conv_filter_ex.capture
-def filter_coordinates(
-    coords, log_pred_profs, true_profs, true_counts, coord_keep_num
-):
+def compute_nlls(log_pred_profs, true_profs, true_counts):
     """
-    Given the predicted and true values for many coordinates, filters the
-    coordinates for a limited set of best-performing coordinates in the model.
-    Performance is ranked by normalized profile NLL.
+    From a set of profile predictions and the set of true profiles, computes the
+    NLLs of the predictions.
     Arguments:
-        `coords`: N x 3 array of coordinates predicted
-        `log_pred_profs`: N x T x O x 2 array of predicted profile log
-            probabilities
-        `true_profs`: N x T x O x 2 array of true profile counts
-        `true_counts`: N x T x 2 array of true total counts
-        `keep_num`: maximum number of coordinates to keep
-    Returns an M x 3 array of filtered (kept) coordinates.
+        `log_pred_profs`: M x T x O x 2 array of predicted log profile
+            probabilities, as returned by `compute_nullified_predictions`
+        `true_profs`: M x T x O x 2 array of true profile counts
+        `true_counts: M x T x 2 array of true total counts
+    Returns an M x T x 2 array of NLLs, and an M x T x 2 array of normalized
+    NLLs.
     """
     # Swap axes on profiles to make them N x T x 2 x O
     true_profs = np.swapaxes(true_profs, 2, 3)
@@ -90,11 +85,7 @@ def filter_coordinates(
     # Normalize the NLLs by dividing by the average counts over strands/tasks
     norm_nll = nll / true_counts
 
-    # Average over tasks and strands to get normalized NLL per sample
-    avg_norm_nll = np.mean(norm_nll, axis=(1, 2))
-
-    # Only keep top `keep_num` coordinates
-    return coords[np.argsort(avg_norm_nll)[:coord_keep_num]]
+    return nll, norm_nll
 
 
 @conv_filter_ex.capture
@@ -110,8 +101,10 @@ def compute_filter_activations(
         `files_spec_path`: path to the JSON files spec for the model
         `coords`: an M x 3 array of what coords to run this for
         `batch_size`: batch size for computation
-    Returns an M x W x F array of activations, where W is the number of windows
-    of the filter length in an input sequence, and F is the number of filters.
+    Returns an M x 2 x W x F array of activations, where W is the number of
+    windows of the filter length in an input sequence, and F is the number of
+    filters. The 2 is for forward and reverse complement. Note that the windows
+    are ordered in reverse for reverse complement sequences.
     """
     # Get the filters in the existing model
     filters = model.get_layer("dil_conv_1").get_weights()
@@ -140,7 +133,7 @@ def compute_filter_activations(
     )
 
     # Run all data through the filter model, which returns filter activations
-    all_activations = np.empty((len(coords), num_windows, num_filters))
+    all_activations = np.empty((len(coords), 2, num_windows, num_filters))
     num_batches = int(np.ceil(len(coords) / batch_size))
     for i in tqdm.trange(num_batches):
         batch_slice = slice(i * batch_size, (i + 1) * batch_size)
@@ -148,7 +141,11 @@ def compute_filter_activations(
         input_seqs = input_func(batch)[0]
     
         activations = filter_model.predict_on_batch(input_seqs)
-        all_activations[batch_slice] = activations
+        all_activations[batch_slice, 0] = activations
+
+        rc_input_seqs = np.flip(input_seqs, axis=(1, 2))
+        rc_activations = filter_model.predict_on_batch(rc_input_seqs)
+        all_activations[batch_slice, 1] = rc_activations
     return all_activations    
 
 
@@ -166,8 +163,8 @@ def compute_nullified_predictions(
         `model`: imported `profile_tf_binding_predictor` model
         `files_spec_path`: path to the JSON files spec for the model
         `coords`: an M x 3 array of what coords to run this for
-        `activations`: an M x W x F array of activations for the original model,
-            returned by `compute_filter_activations`
+        `activations`: an M x 2 x W x F array of activations for the original
+            model, returned by `compute_filter_activations`
         `filter_index`: index of filter to nullify
         `batch_size`: batch size for computation
     Returns an M x T x O x 2 array of predicted log profile probabilities and an
@@ -182,7 +179,7 @@ def compute_nullified_predictions(
     nulled_weights = [x.copy() for x in filter_weights]
     nulled_weights[0][:, :, filter_index] = 0  # Multiplicative weights to 0
     nulled_weights[1][filter_index] = np.mean(
-        activations[:, :, filter_index]
+        activations[:, :, :, filter_index]
     )  # Set bias to the average activation for the filter over all examples
     
     # Set the weights to nullify the filter
@@ -207,12 +204,12 @@ def compute_nullified_predictions(
 
     model.get_layer("dil_conv_1").set_weights(filter_weights)  # Restore weights
     return all_log_pred_profs, all_log_pred_counts
-
+ 
 
 @conv_filter_ex.capture
 def compute_all_filter_predictions(
     model_path, files_spec_path, num_tasks, out_hdf5_path, input_length,
-    profile_length, reference_fasta, full_chrom_set
+    profile_length, reference_fasta, full_chrom_set, coord_keep_num
 ):
     """
     For the model at the given model path, for all peaks over all chromosomes,
@@ -227,16 +224,19 @@ def compute_all_filter_predictions(
         `out_hdf5_path`: path to save results
     Results will be saved in the specified HDF5, under the following keys:
         `predictions`:
-            `log_pred_profs`: N x T x O x 2 array of predicted log profile
-                probabilities (N is the number of peaks, T is number of tasks,
+            `log_pred_profs`: M x T x O x 2 array of predicted log profile
+                probabilities (M is the number of peaks, T is number of tasks,
                 O is profile length, 2 for each strand)
-            `log_pred_counts`: N x T x 2 array of log counts
-        `filtered_coords`: contains coordinates used to compute activations and
+            `log_pred_counts`: M x T x 2 array of log counts
+            `nlls`: M x T x 2 array of NLL values
+            `norm_nlls`: M x T x 2 array of normalized NLL values
+        `coords`: contains coordinates used to compute activations and
             nullified predictions (subset of all peaks)
             `coords_chrom`: M-array of chromosome (string)
             `coords_start`: M-array
             `coords_end`: M-array
-        `activations`: M x W x F array of activations (W is number of windows
+        `activations`: M x 2 x W x F array of activations (M peaks, for forward
+            and reverse complement of the input sequence, W is number of windows
             of the filter length in the input sequence, F is the number of
             filters)
         `nullified_predictions`:
@@ -244,10 +244,9 @@ def compute_all_filter_predictions(
                 probabilities if each of the F filters were nullified
             `log_pred_counts`: M x F x T x 2 array of log counts if each of the
                 F filters were nullified
+            `nlls`: M x F x T x 2 array of NLL values
+            `norm_nlls`: M x F x T x 2 array of normalized NLL values
         `truth`:
-            `coords_chrom`: N-array of chromosome (string)
-            `coords_start`: N-array
-            `coords_end`: N-array
             `true_profs`: N x T x O x 2 array of true profile counts
             `true_counts`: N x T x 2 array of true counts
     """
@@ -264,18 +263,26 @@ def compute_all_filter_predictions(
             model, files_spec_path, input_length, profile_length, num_tasks,
             reference_fasta, chrom_set=full_chrom_set
         )
+
+    # Compute NLL
+    nlls, norm_nlls = compute_nlls(log_pred_profs, true_profs, true_counts)
+    # Average over tasks and strands to get normalized NLL per sample
+    avg_norm_nlls = np.mean(norm_nlls, axis=(1, 2))
+    # Only keep top coordinates to do downstream computation
+    keep_inds = np.argsort(avg_norm_nlls)[:coord_keep_num]
+
+    # Limit the set of coordinates/predictions
+    coords = coords[keep_inds]
+    log_pred_profs = log_pred_profs[keep_inds]
+    log_pred_counts = log_pred_counts[keep_inds]
+    true_profs = true_profs[keep_inds]
+    true_counts = true_counts[keep_inds]
+    nlls = nlls[keep_inds]
+    norm_nlls = norm_nlls[keep_inds]
+
     print("Saving predictions...")
     truth_group = h5_file.create_group("truth")
     pred_group = h5_file.create_group("predictions")
-    truth_group.create_dataset(
-        "coords_chrom", data=coords[:, 0].astype("S"), compression="gzip"
-    )
-    truth_group.create_dataset(
-        "coords_start", data=coords[:, 1].astype(int), compression="gzip"
-    )
-    truth_group.create_dataset(
-        "coords_end", data=coords[:, 2].astype(int), compression="gzip"
-    )
     truth_group.create_dataset(
         "true_profs", data=true_profs, compression="gzip"
     )
@@ -288,29 +295,24 @@ def compute_all_filter_predictions(
     pred_group.create_dataset(
         "log_pred_counts", data=log_pred_counts, compression="gzip"
     )
+    pred_group.create_dataset("nlls", data=nlls, compression="gzip")
+    pred_group.create_dataset("norm_nlls", data=norm_nlls, compression="gzip")
 
-    # Filter set of coordinates for top-performing coordinates
-    print("Filtering coordinates down...")
-    filtered_coords = filter_coordinates(
-        coords, log_pred_profs, true_profs, true_counts
+    coord_group = h5_file.create_group("coords")
+    coord_group.create_dataset(
+        "coords_chrom", data=coords[:, 0].astype("S"), compression="gzip"
     )
-    filtered_coord_group = h5_file.create_group("filtered_coords")
-    filtered_coord_group.create_dataset(
-        "coords_chrom", data=filtered_coords[:, 0].astype("S"),
-        compression="gzip"
+    coord_group.create_dataset(
+        "coords_start", data=coords[:, 1].astype(int), compression="gzip"
     )
-    filtered_coord_group.create_dataset(
-        "coords_start", data=filtered_coords[:, 1].astype(int),
-        compression="gzip"
-    )
-    filtered_coord_group.create_dataset(
-        "coords_end", data=filtered_coords[:, 2].astype(int), compression="gzip"
+    coord_group.create_dataset(
+        "coords_end", data=coords[:, 2].astype(int), compression="gzip"
     )
 
     # Compute normal filter activations
     print("Computing filter activations...")
     activations = compute_filter_activations(
-        model, files_spec_path, filtered_coords
+        model, files_spec_path, coords
     )
 
     print("Saving activations...")
@@ -318,7 +320,7 @@ def compute_all_filter_predictions(
 
     # Compute predictions after nullifying each filter
     print("Computing null-filter predictions...")
-    num_samples, num_filters = activations.shape[0], activations.shape[2]
+    num_samples, num_filters = activations.shape[0], activations.shape[3]
 
     null_pred_group = h5_file.create_group("nullified_predictions")
     null_log_pred_profs = null_pred_group.create_dataset(
@@ -330,16 +332,26 @@ def compute_all_filter_predictions(
         "log_pred_counts", (num_samples, num_filters, num_tasks, 2),
         compression="gzip"
     )
+    null_nlls = null_pred_group.create_dataset(
+        "nlls", (num_samples, num_filters, num_tasks, 2), compression="gzip"
+    )
+    null_norm_nlls = null_pred_group.create_dataset(
+        "norm_nlls", (num_samples, num_filters, num_tasks, 2),
+        compression="gzip"
+    )
 
     for filter_index in range(num_filters):
         print("\tNullifying filter %d" % (filter_index + 1))
         log_pred_profs, log_pred_counts = compute_nullified_predictions(
-            model, files_spec_path, filtered_coords, activations, filter_index,
+            model, files_spec_path, coords, activations, filter_index,
             num_tasks
         )
-        print("\tSaving null-filter activations...")
-        null_log_pred_profs[:, filter_index, :, :, :] = log_pred_profs
-        null_log_pred_counts[:, filter_index, :, :] = log_pred_counts
+        nlls, norm_nlls = compute_nlls(log_pred_profs, true_profs, true_counts)
+        print("\tSaving null-filter predictions...")
+        null_log_pred_profs[:, filter_index] = log_pred_profs
+        null_log_pred_counts[:, filter_index] = log_pred_counts
+        null_nlls[:, filter_index] = nlls
+        null_norm_nlls[:, filter_index] = norm_nlls
 
     h5_file.close()
 
