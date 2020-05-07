@@ -1,3 +1,5 @@
+set -beEo pipefail
+
 show_help() {
 	cat << EOF
 Usage: ${0##*/} [OPTIONS] IN_FASTA OUT_DIR
@@ -50,4 +52,4 @@ else
 	cat $infasta | awk -v limit=$limit '{if (substr($0, 1, 1) == ">") { count++ }; if (count == (limit + 1)) { exit 0 }; print $0}' > $outdir/input.fasta
 fi
 
-meme $outdir/input.fasta -dna -mod anr -nmotifs 3 -minw 6 -maxw 50 -oc $outdir
+meme $outdir/input.fasta -p 4 -dna -mod zoops -nmotifs 10 -minw 6 -maxw 50 -objfun classic -revcomp -markov_order 0 -oc $outdir

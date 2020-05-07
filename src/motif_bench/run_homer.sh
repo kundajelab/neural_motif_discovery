@@ -1,9 +1,11 @@
+set -beEo pipefail
+
 show_help() {
 	cat << EOF
 Usage: ${0##*/} [OPTIONS] IN_FILE OUT_DIR
 Runs HOMER on the input 'IN_FILE' and outputs results in 'OUT_DIR'.
 'IN_FILE' may be a Fasta, a BED, or gzipped BED.
-HOMER needs to be loaded.
+HOMER 2 needs to be loaded.
 Assumes reference genome of hg38.
 EOF
 }
