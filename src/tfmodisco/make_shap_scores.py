@@ -74,7 +74,8 @@ def main(
 
     # Get set of positive coordinates
     all_pos_coords = data_loading.get_positive_inputs(
-        files_spec_path, chrom_set=chrom_set
+        files_spec_path, chrom_set=chrom_set,
+        task_indices=(None if task_index is None else [task_index])
     )
     num_coords = len(all_pos_coords)
 

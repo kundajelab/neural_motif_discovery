@@ -41,18 +41,22 @@ def get_input_func(
     return data_func
         
 
-def get_positive_inputs(files_spec_path, chrom_set=None):
+def get_positive_inputs(files_spec_path, chrom_set=None, task_indices=None):
     """
     Gets the set of positive coordinates from the files specs.
     Arguments:
         `files_spec_path`: path to the JSON files spec for the model
         `chrom_set`: if given, limit the set of coordinates to these chromosomes
+        `task_indices`: if given, a list of task indices to keep only
     Returns an N x 3 array of coordinates.
     """
     with open(files_spec_path, "r") as f:
         files_spec = json.load(f)
     peaks = []
-    for peaks_bed in files_spec["peak_beds"]:
+    peaks_beds = files_spec["peak_beds"]
+    if task_indices:
+        peaks_beds = [peaks_beds[i] for i in task_indices]
+    for peaks_bed in peaks_beds:
         table = pd.read_csv(peaks_bed, sep="\t", header=None)
         if chrom_set is not None:
             table = table[table[0].isin(chrom_set)]
