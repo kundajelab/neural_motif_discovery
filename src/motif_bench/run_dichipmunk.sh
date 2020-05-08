@@ -41,4 +41,7 @@ outdir=$2
 
 mkdir -p $outdir
 
-java -cp $chipmunkpath ru.autosome.di.ChIPHorde 10:12 mask yes 1.0 s:$infile 1> $outdir/results.txt 2>$outdir/log.txt
+length=10:12
+alllengths=$(printf "$length%.0s," {1..9})
+alllengths=${alllengths}$length
+java -cp $chipmunkpath ru.autosome.di.ChIPHorde $alllengths filter yes 1.0 s:$infile 200 20 1 4 random auto 1> $outdir/results.txt 2> >(tee $outdir/log.txt >&2)

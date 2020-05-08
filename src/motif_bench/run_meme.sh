@@ -47,6 +47,10 @@ mkdir -p $outdir
 # If specified, take the first `limit` top sequences
 if [[ -z $limit ]]
 then
+	if [[ -e $outdir/input.fasta ]]
+	then
+		rm $outdir/input.fasta
+	fi
 	ln -s $infasta $outdir/input.fasta
 else
 	cat $infasta | awk -v limit=$limit '{if (substr($0, 1, 1) == ">") { count++ }; if (count == (limit + 1)) { exit 0 }; print $0}' > $outdir/input.fasta

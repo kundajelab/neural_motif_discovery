@@ -36,16 +36,19 @@ def extract_peak_intervals(peak_bed_paths, save_path, peak_limit=None):
     peaks.to_csv(save_path, sep="\t", header=False, index=False)
 
 
-def bed_to_fasta(bed_path, fasta_path, reference_fasta):
+def bed_to_fasta(bed_path, fasta_path, reference_fasta, peak_center_size=0):
     """
     Converts a BED into a Fasta.
     Arguments:
         `bed_path`: path to BED file to convert
         `fasta_path`: path to output Fasta file
         `reference_fasta`: path to reference genome Fasta
+        `peak_center_size`: if specified, cut off peaks to be this size,
+            centered around the summit
     """
     comm = ["python", os.path.join(MOTIF_BENCH_SRC_DIR, "bed_to_fasta.py")]
     comm += ["-r", reference_fasta]
+    comm += ["-l", str(peak_center_size)]
     comm += [bed_path, fasta_path]
     proc = subprocess.Popen(comm)
     proc.wait()
@@ -100,8 +103,12 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
     help="Comma-separated list of sources (i.e. peaks, seqlets); defaults to both"
 )
 @click.option(
-    "-l", "--peak-limit", default=5000,
+    "-l", "--peak-limit", default=1000,
     help="Maximum number of peaks to use; set to 0 for unlimited"
+)
+@click.option(
+    "-c", "--peak-center-size", default=200,
+    help="Cut off peaks to this length around the summit; set to 0 for no cut-off"
 )
 @click.option(
     "-r", "--reference-fasta", default="/users/amtseng/genomes/hg38.fasta",
@@ -109,7 +116,7 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
 )
 def main(
     out_dir, files_spec_path, task_index, seqlets_path, benchmark_types,
-    sources, peak_limit, reference_fasta
+    sources, peak_limit, peak_center_size, reference_fasta
 ):
     """
     Runs motif benchmarks (i.e. MEME, HOMER, and/or DiChIPMunk) on a TF's peaks
@@ -137,7 +144,9 @@ def main(
                 specs = json.load(f)
                 peak_bed_paths = specs["peak_beds"]
             extract_peak_intervals(peak_bed_paths, bed_path, peak_limit)
-            bed_to_fasta(bed_path, fasta_path, reference_fasta)
+            bed_to_fasta(
+                bed_path, fasta_path, reference_fasta, peak_center_size
+            )
         else:
             # The unadulterated seqlets Fasta
             fasta_path = seqlets_path
