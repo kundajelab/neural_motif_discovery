@@ -152,9 +152,11 @@ class SamplingCoordsBatcher:
     Arguments:
         `pos_coords_beds`: list of paths to gzipped BED files containing the
             sets of positive coordinates for various tasks
+        `input_length`: length of input sequences to generate
         `batch_size`: number of samples per batch
         `neg_ratio`: number of negatives to select for each positive example
         `jitter`: random amount to jitter each positive coordinate example by
+        `chrom_sizes_tsv`: path to 2-column TSV listing sizes of each chromosome
         `genome_sampler`: a GenomeIntervalSampler instance, which samples
             intervals randomly from the genome
         `chroms_keep`: if specified, only considers this set of chromosomes from
@@ -165,9 +167,9 @@ class SamplingCoordsBatcher:
             each epoch
     """
     def __init__(
-        self, pos_coords_beds, batch_size, neg_ratio, jitter, genome_sampler,
-        chroms_keep=None, return_peaks=False, shuffle_before_epoch=False,
-        seed=None
+        self, pos_coords_beds, input_length, batch_size, neg_ratio, jitter,
+        chrom_sizes_tsv, genome_sampler, chroms_keep=None, return_peaks=False,
+        shuffle_before_epoch=False, seed=None
     ):
         self.chroms_keep = chroms_keep
         self.batch_size = batch_size
@@ -184,13 +186,38 @@ class SamplingCoordsBatcher:
         sample_coords = []
         for i, pos_coords_bed in enumerate(pos_coords_beds):
             pos_coords_table = pd.read_csv(
-                pos_coords_bed, sep="\t", header=None, compression="gzip"
+                pos_coords_bed, sep="\t", header=None,  # Infer compression
+                names=[
+                    "chrom", "peak_start", "peak_end", "name", "score",
+                    "strand", "signal", "pval", "qval", "summit_offset"
+                ]
             )
-            if chroms_keep:
-                pos_coords_table = \
-                    pos_coords_table[pos_coords_table[0].isin(chroms_keep)]
 
-            coords = pos_coords_table.values.astype(object)
+            if chroms_keep:
+                pos_coords_table = pos_coords_table[
+                    pos_coords_table["chrom"].isin(chroms_keep)
+                ]
+
+            # Make padded intervals
+            pos_coords_table["summit"] = pos_coords_table["peak_start"] + \
+                pos_coords_table["summit_offset"]
+            pos_coords_table["start"] = \
+                pos_coords_table["summit"] - (input_length // 2)
+            pos_coords_table["end"] = pos_coords_table["start"] + input_length
+
+            # Filter anything that would overrun chromosome boundaries
+            chrom_sizes = pd.read_csv(
+                chrom_sizes_tsv, sep="\t", header=None, names=["chrom", "size"]
+            )
+            pos_coords_table = pos_coords_table.merge(chrom_sizes, on="chrom")
+            left_mask = pos_coords_table["start"] - jitter >= 0
+            right_mask = \
+                pos_coords_table["end"] + jitter < pos_coords_table["size"]
+            pos_coords_table = pos_coords_table.loc[left_mask & right_mask]
+
+            coords = pos_coords_table[
+                ["chrom", "start", "end", "peak_start", "peak_end", "summit"]
+            ].values.astype(object)
             coords = np.concatenate(
                 [coords, np.tile(i + 1, (len(coords), 1))], axis=1
             )
@@ -267,7 +294,9 @@ class SummitCenteringCoordsBatcher(SamplingCoordsBatcher):
     Arguments:
         `pos_coords_beds`: list of paths to gzipped BED files containing the
             sets of positive coordinates for various tasks
+        `input_length`: length of input sequences to generate
         `batch_size`: number of samples per batch
+        `chrom_sizes_tsv`: path to 2-column TSV listing sizes of each chromosome
         `chroms_keep`: if specified, only considers this set of chromosomes from
             the coordinate BEDs
         `return_peaks`: if True, returns the peaks and summits sampled from the
@@ -276,17 +305,20 @@ class SummitCenteringCoordsBatcher(SamplingCoordsBatcher):
             each epoch
     """
     def __init__(
-        self, pos_coords_beds, batch_size, chroms_keep=None, return_peaks=False,
-        shuffle_before_epoch=False, seed=None
+        self, pos_coords_beds, input_length, batch_size, chrom_sizes_tsv,
+        chroms_keep=None, return_peaks=False, shuffle_before_epoch=False,
+        seed=None
     ):
         # Same as a normal SamplingCoordsBatcher, but with no negatives and no
         # jitter, since the coordinates in the positive coordinate BEDs are
         # already centered at the summits
         super().__init__(
             pos_coords_beds=pos_coords_beds,
+            input_length=input_length,
             batch_size=batch_size,
             neg_ratio=0,
             jitter=0,
+            chrom_sizes_tsv=chrom_sizes_tsv,
             genome_sampler=None,
             chroms_keep=chroms_keep,
             return_peaks=return_peaks,
@@ -302,8 +334,10 @@ class PeakTilingCoordsBatcher(SamplingCoordsBatcher):
     Arguments:
         `pos_coords_beds`: list of paths to gzipped BED files containing the
             sets of positive coordinates for various tasks
+        `input_length`: length of input sequences to generate
         `stride`: amount of stride when tiling the coordinates
         `batch_size`: number of samples per batch
+        `chrom_sizes_tsv`: path to 2-column TSV listing sizes of each chromosome
         `chroms_keep`: if specified, only considers this set of chromosomes from
             the coordinate BEDs
         `return_peaks`: if True, returns the peaks and summits sampled from the
@@ -312,8 +346,9 @@ class PeakTilingCoordsBatcher(SamplingCoordsBatcher):
             each epoch
     """
     def __init__(
-        self, pos_coords_beds, stride, batch_size, chroms_keep=None,
-        return_peaks=False, shuffle_before_epoch=False, seed=None
+        self, pos_coords_beds, input_length, stride, batch_size,
+        chrom_sizes_tsv, chroms_keep=None, return_peaks=False,
+        shuffle_before_epoch=False, seed=None
     ):
         self.stride = stride
         self.batch_size = batch_size
@@ -328,13 +363,36 @@ class PeakTilingCoordsBatcher(SamplingCoordsBatcher):
         peak_coords = []
         for i, pos_coords_bed in enumerate(pos_coords_beds):
             pos_coords_table = pd.read_csv(
-                pos_coords_bed, sep="\t", header=None, compression="gzip",
-                usecols=[0, 3, 4, 5]
+                pos_coords_bed, sep="\t", header=None,  # Infer compression
+                names=[
+                    "chrom", "peak_start", "peak_end", "name", "score",
+                    "strand", "signal", "pval", "qval", "summit_offset"
+                ]
             )
+
             if chroms_keep:
-                pos_coords_table = \
-                    pos_coords_table[pos_coords_table[0].isin(chroms_keep)]
-            coords = pos_coords_table.values.astype(object)
+                pos_coords_table = pos_coords_table[
+                    pos_coords_table["chrom"].isin(chroms_keep)
+                ]
+
+            pos_coords_table["summit"] = pos_coords_table["peak_start"] + \
+                pos_coords_table["summit_offset"]
+
+            # Filter anything that would overrun chromosome boundaries
+            chrom_sizes = pd.read_csv(
+                chrom_sizes_tsv, sep="\t", header=None, names=["chrom", "size"]
+            )
+            pos_coords_table = pos_coords_table.merge(chrom_sizes, on="chrom")
+            left_mask = \
+                pos_coords_table["peak_start"] - (input_length // 2) >= 0
+            right_mask = \
+                pos_coords_table["peak_end"] + (input_length // 2) < \
+                pos_coords_table["size"]
+            pos_coords_table = pos_coords_table.loc[left_mask & right_mask]
+
+            coords = pos_coords_table[
+                ["chrom", "peak_start", "peak_end", "summit"]
+            ].values.astype(object)
             coords = np.concatenate(
                 [coords, np.tile(i + 1, (len(coords), 1))], axis=1
             )
@@ -501,22 +559,23 @@ def create_data_loader(
         )
         # Yields batches of positive and negative coordinates
         coords_batcher = SamplingCoordsBatcher(
-            peaks_bed_paths, batch_size, negative_ratio, jitter_size,
-            genome_sampler, chroms_keep=chrom_set, return_peaks=return_coords,
-            shuffle_before_epoch=shuffle, seed=dataset_seed
+            peaks_bed_paths, input_length, batch_size, negative_ratio,
+            jitter_size, chrom_sizes, genome_sampler, chroms_keep=chrom_set,
+            return_peaks=return_coords, shuffle_before_epoch=shuffle,
+            seed=dataset_seed
         )
     elif sampling_type == "SummitCenteringCoordsBatcher":
         # Yields batches of positive coordinates, centered at summits
         coords_batcher = SummitCenteringCoordsBatcher(
-            peaks_bed_paths, batch_size, chroms_keep=chrom_set,
-            return_peaks=return_coords, shuffle_before_epoch=shuffle,
-            seed=dataset_seed
+            peaks_bed_paths, input_length, batch_size, chrom_sizes,
+            chroms_keep=chrom_set, return_peaks=return_coords,
+            shuffle_before_epoch=shuffle, seed=dataset_seed
         )
     else:
         # Yields batches of positive coordinates, tiled across peaks
         coords_batcher = PeakTilingCoordsBatcher(
-            peaks_bed_paths, peak_tiling_stride, batch_size,
-            chroms_keep=chrom_set, return_peaks=return_coords,
+            peaks_bed_paths, input_length, peak_tiling_stride, batch_size,
+            chrom_sizes, chroms_keep=chrom_set, return_peaks=return_coords,
             shuffle_before_epoch=shuffle, seed=dataset_seed
         )
 
@@ -541,7 +600,7 @@ def main():
     global data, loader
     import tqdm
 
-    paths_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/TEAD4/TEAD4_training_paths.json"
+    paths_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/SPI1/SPI1_training_paths.json"
     with open(paths_json_path, "r") as f:
         paths_json = json.load(f)
     peaks_bed_files = paths_json["peak_beds"]
@@ -553,10 +612,11 @@ def main():
     train_chroms, val_chroms, test_chroms = \
         splits_json["1"]["train"], splits_json["1"]["val"], \
         splits_json["1"]["test"]
+    all_chroms = train_chroms + val_chroms + test_chroms
 
     data_loader = create_data_loader(
         peaks_bed_files, profile_hdf5_file, "SamplingCoordsBatcher",
-        return_coords=True, chrom_set=val_chroms
+        return_coords=True, chrom_set=all_chroms
     )
 
     start_time = datetime.now()
@@ -568,7 +628,6 @@ def main():
 
     for i in tqdm.trange(len(enq.sequence)):
         data = next(para_batch_gen)
-        break
     end_time = datetime.now()
     print("Time: %ds" % (end_time - start_time).seconds)
 
@@ -583,9 +642,13 @@ def main():
         seqs[k], profiles[k], statuses[k], coords[k], peaks[k]
     rc_seq, rc_prof, rc_status, rc_coord, rc_peak = \
         seqs[rc_k], profiles[rc_k], statuses[rc_k], coords[rc_k], peaks[rc_k]
+
+    def print_one_hot_seq(one_hot):
+        s = util.one_hot_to_seq(one_hot)
+        print(s[:20] + "..." + s[-20:])
     
-    print(util.one_hot_to_seq(seq))
-    print(util.one_hot_to_seq(rc_seq))
+    print_one_hot_seq(seq)
+    print_one_hot_seq(rc_seq)
 
     print(status, rc_status)
     print(coord, rc_coord)

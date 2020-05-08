@@ -73,10 +73,8 @@ do
 	bedGraphToBigWig $tempdir/tfaligns_$expidcline\_pos.bg $chromsizes $outdir/$tfname\_$expidcline\_pos.bw
 	bedGraphToBigWig $tempdir/tfaligns_$expidcline\_neg.bg $chromsizes $outdir/$tfname\_$expidcline\_neg.bw
 
-	# 2) Generate bins of the positive binding centered around optimal peak summits
-	# 2.1) Fetch the peak summits, expand to length 1000 but not past the chromosome edges
-	printf "\tGenerating bins of positive-binding peaks\n"
-	zcat $tfpeaksopt | awk -F "\t" '{print $1 "\t" $2 + $10 "\t" $2 + $10 "\t" $2 "\t" $3 "\t" $2 + $10}' | bedtools slop -g $chromsizes -b 500 | awk '$3 - $2 == 1000' | bedtools sort | gzip > $outdir/$tfname\_$expidcline\_all_peakints.bed.gz
+	# 2) Copy over the optimal peaks for the positive training set
+	cp $tfpeaksopt $outdir/$tfname\_$expidcline\_all_peakints.bed.gz
 
 	# Clean up this iteration
 	rm -rf $tempdir/*
