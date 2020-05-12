@@ -137,7 +137,7 @@ def main(
         if source == "peaks":
             # Create the peaks Fasta, perhaps limited
             peaks_name = "peaks" if task_index is None \
-                else "peaks_task%d" % task_index
+                else "peaks_task%d" % int(task_index)
             bed_path = os.path.join(out_dir, peaks_name + ".bed")
             fasta_path = os.path.join(out_dir, peaks_name + ".fasta")
             with open(files_spec_path, "r") as f:
