@@ -67,7 +67,7 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
     if benchmark_type == "meme":
         comm += [os.path.join(MOTIF_BENCH_SRC_DIR, "run_meme.sh")]
     elif benchmark_type == "memechip":
-        comm += [os.path.join(MOTIF_BENCH_SRC_DIR, "run_meme_chip.sh")]
+        comm += [os.path.join(MOTIF_BENCH_SRC_DIR, "run_memechip.sh")]
     elif benchmark_type == "homer":
         comm += [os.path.join(MOTIF_BENCH_SRC_DIR, "run_homer.sh")]
     elif benchmark_type == "dichipmunk":
