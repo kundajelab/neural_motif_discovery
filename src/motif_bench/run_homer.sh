@@ -51,7 +51,7 @@ outdir=$2
 mkdir -p $outdir
 if [ ${infile: -6} == ".fasta" ]
 then
-	findMotifs.pl $infile fasta $outdir -len 12 -p 4
+	findMotifs.pl $infile fasta $outdir -b -len 12 -p 4  # Use binomial scoring
 elif [ ${infile: -3} == ".gz" ]
 then
 	findMotifsGenome.pl <(zcat $infile) $genome $outdir -len 12 -size 200 -p 4

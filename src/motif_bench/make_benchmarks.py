@@ -66,6 +66,8 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
     comm = ["bash"]
     if benchmark_type == "meme":
         comm += [os.path.join(MOTIF_BENCH_SRC_DIR, "run_meme.sh")]
+    elif benchmark_type == "memechip":
+        comm += [os.path.join(MOTIF_BENCH_SRC_DIR, "run_meme_chip.sh")]
     elif benchmark_type == "homer":
         comm += [os.path.join(MOTIF_BENCH_SRC_DIR, "run_homer.sh")]
     elif benchmark_type == "dichipmunk":
@@ -95,7 +97,7 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
     help="Path to seqlets; required for seqlet sources"
 )
 @click.option(
-    "-b", "--benchmark-types", default="meme,homer,dichipmunk",
+    "-b", "--benchmark-types", default="meme,memechip,homer,dichipmunk",
     help="Comma-separated list of benchmarks to run; defaults to all"
 )
 @click.option(
@@ -103,7 +105,7 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
     help="Comma-separated list of sources (i.e. peaks, seqlets); defaults to both"
 )
 @click.option(
-    "-l", "--peak-limit", default=1000,
+    "-l", "--peak-limit", default=1000, type=int,
     help="Maximum number of peaks to use; set to 0 for unlimited"
 )
 @click.option(
@@ -119,8 +121,8 @@ def main(
     sources, peak_limit, peak_center_size, reference_fasta
 ):
     """
-    Runs motif benchmarks (i.e. MEME, HOMER, and/or DiChIPMunk) on a TF's peaks
-    and/or TF-MoDISco-identified seqlets
+    Runs motif benchmarks (i.e. MEME, MEME-ChIP, HOMER, and/or DiChIPMunk) on a
+    TF's peaks and/or TF-MoDISco-identified seqlets
     """
     benchmark_types = list(set(benchmark_types.split(","))) 
     sources = list(set(sources.split(","))) 
@@ -128,7 +130,7 @@ def main(
     for source in sources:
         assert source in ("peaks", "seqlets")
     for benchmark_type in benchmark_types:
-        assert benchmark_type in ("meme", "homer", "dichipmunk")
+        assert benchmark_type in ("meme", "memechip", "homer", "dichipmunk")
 
     os.makedirs(out_dir, exist_ok=True)
 
