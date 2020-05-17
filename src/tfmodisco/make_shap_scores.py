@@ -2,7 +2,6 @@ import numpy as np
 import click
 import json
 import model.train_profile_model as train_profile_model
-import feature.make_profile_dataset as make_profile_dataset
 import keras.utils
 import extract.compute_shap as compute_shap
 import extract.data_loading as data_loading
@@ -80,19 +79,9 @@ def main(
     num_coords = len(all_pos_coords)
 
     # Make data loader
-    batch_size = 128
-    data_loader = make_profile_dataset.create_data_loader(
-        peak_beds, profile_hdf5, "SummitCenteringCoordsBatcher",
-        batch_size=batch_size, reference_fasta=reference_fasta,
-        chrom_sizes=chrom_sizes, input_length=input_length,
-        profile_length=profile_length, negative_ratio=0, peak_tiling_stride=0,
-        revcomp=False, jitter_size=0, dataset_seed=None, chrom_set=chrom_set,
-        shuffle=False, return_coords=True
+    input_func = data_loading.get_input_func(
+        files_spec_path, input_length, profile_length, reference_fasta
     )
-    enq = keras.utils.OrderedEnqueuer(data_loader, use_multiprocessing=True)
-    workers, queue_size = 10, 20
-    enq.start(workers, queue_size)
-    para_batch_gen = enq.get()
 
     # Make explainer
     explainer = compute_shap.create_explainer(model, task_index=task_index)
@@ -120,16 +109,13 @@ def main(
     model.attrs["model"] = model_path
 
     print("Computing importance scores...")
-    num_seen = 0
-    for i in tqdm.trange(len(enq.sequence)):
-        input_seqs, profiles, status, coords, peaks = next(para_batch_gen)
+    batch_size = 128
+    num_batches = int(np.ceil(num_coords / batch_size))
+    for i in tqdm.trange(num_batches):
+        start, end = i * batch_size, (i + 1) * batch_size
+        coords = all_pos_coords[start:end]
+        input_seqs, profiles = input_func(coords)
         cont_profs = profiles[:, num_tasks:]
-        num_in_batch = len(input_seqs)
-        start, end = num_seen, num_seen + num_in_batch
-
-        assert np.all(coords[:, 0] == all_pos_coords[start:end, 0])
-        assert np.all(coords[:, 1] == all_pos_coords[start:end, 1])
-        assert np.all(coords[:, 2] == all_pos_coords[start:end, 2])
 
         # Expand/cut coordinates to right input length
         midpoints = (coords[:, 1] + coords[:, 2]) // 2
@@ -141,7 +127,6 @@ def main(
         coords_chrom_dset[start:end] = coords[:, 0].astype("S")
         coords_start_dset[start:end] = coords[:, 1].astype(int)
         coords_end_dset[start:end] = coords[:, 2].astype(int)
-        num_seen += num_in_batch
     enq.stop()
 
 

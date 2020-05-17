@@ -43,7 +43,9 @@ def get_input_func(
 
 def get_positive_inputs(files_spec_path, chrom_set=None, task_indices=None):
     """
-    Gets the set of positive coordinates from the files specs.
+    Gets the set of positive coordinates from the files specs. The coordinates
+    are sorted within each task file, and concatenated in the order given by
+    the specs.
     Arguments:
         `files_spec_path`: path to the JSON files spec for the model
         `chrom_set`: if given, limit the set of coordinates to these chromosomes
@@ -57,8 +59,18 @@ def get_positive_inputs(files_spec_path, chrom_set=None, task_indices=None):
     if task_indices:
         peaks_beds = [peaks_beds[i] for i in task_indices]
     for peaks_bed in peaks_beds:
-        table = pd.read_csv(peaks_bed, sep="\t", header=None)
+        table = pd.read_csv(
+            peaks_bed, sep="\t", header=None,  # Infer compression
+            names=[
+                "chrom", "peak_start", "peak_end", "name", "score",
+                "strand", "signal", "pval", "qval", "summit_offset"
+            ]
+        )
         if chrom_set is not None:
-            table = table[table[0].isin(chrom_set)]
-        peaks.append(table.values[:, :3])
+            table = table[table["chrom"].isin(chrom_set)]
+        table["summit"] = table["peak_start"] + table["summit_offset"]
+        table = table.sort_values(by=["chrom", "summit"])
+        vals = table[["chrom", "summit", "summit"]].values
+        vals[:, 2] = vals[:, 2] + 1
+        peaks.append(vals)
     return np.concatenate(peaks)
