@@ -127,7 +127,6 @@ def main(
         coords_chrom_dset[start:end] = coords[:, 0].astype("S")
         coords_start_dset[start:end] = coords[:, 1].astype(int)
         coords_end_dset[start:end] = coords[:, 2].astype(int)
-    enq.stop()
 
 
 if __name__ == "__main__":
