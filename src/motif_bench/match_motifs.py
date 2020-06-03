@@ -88,7 +88,7 @@ def match_motifs(
         `temp_dir`: a temporary directory to store intermediates; defaults to
             a randomly created directory
         `show_tomtom_output`: whether to show TOMTOM output when running
-    Returns a list of indices parallel to `query_pfms`, where each index is
+    Returns an array of indices parallel to `query_pfms`, where each index is
     denotes the best PFM within `target_pfms` that matches the query PFM. If
     a good match is not found (i.e. based on TOMTOM's threshold), the index will
     be -1.
@@ -127,7 +127,7 @@ def match_motifs(
     if temp_dir_obj is not None:
         temp_dir_obj.cleanup()
 
-    return match_inds
+    return np.array(match_inds)
         
 
 if __name__ == "__main__":

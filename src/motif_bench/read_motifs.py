@@ -8,6 +8,20 @@ BASES = ["A", "C", "G", "T"]
 BASE_IND_DICT = {base: i for i, base in enumerate(BASES)}
 DINUCS = [x + y for x in BASES for y in BASES]
 DICHIPMUNK_DINUC_PREFIXES = [dinuc + "|" for dinuc in DINUCS]
+BACKGROUND_FREQS = np.array([0.27, 0.23, 0.23, 0.27])
+
+def pfm_info_content(pfm, pseudocount=0.001):
+    """
+    Given an L x 4 PFM, computes information content for each base and
+    returns it as an L-array.
+    """
+    num_bases = pfm.shape[1]
+    # Normalize track to probabilities along base axis
+    pfm_norm = (pfm + pseudocount) / \
+        (np.sum(pfm, axis=1, keepdims=True) + (num_bases * pseudocount))
+    ic = pfm_norm * np.log2(pfm_norm / np.expand_dims(BACKGROUND_FREQS, axis=0))
+    return np.sum(ic, axis=1)
+
 
 def dinuc_to_mononuc_pfm(dinuc_dict):
     """
@@ -125,12 +139,22 @@ def import_meme_pfms(meme_results_path):
     return pfms, evalues
 
 
-def import_tfmodisco_motifs(tfm_results_hdf5):
+def import_tfmodisco_motifs(
+    tfm_results_hdf5, pos_contrib_only=True, min_ic=0.6, ic_window=6,
+    trim_flank_ic_frac=0.2
+):
     """
     Imports the TF-MoDISco motifs, and returns a list of motifs. Ignores all
     motifs where the total sum of the CWM is negative.
     Arguments:
-        `tfm_reuslts_hdf5`: path to TF-MoDISco results HDF5
+        `tfm_results_hdf5`: path to TF-MoDISco results HDF5
+        `pos_contrib_only`: if True, only return motifs with a total
+            contribution score (i.e. summed importance) that is positive
+        `min_ic`: minimum information content required within some window of
+            size `ic_window`
+        `ic_window`: size of window to compute information content in
+        `trim_flank_ic_frac`: threshold fraction of maximum information content
+            to trim low-IC flanks from motif
     Returns a list of PFMs, a list of CWMs, and a list of number of seqlets
     supporting each motif.
     """
@@ -153,11 +177,26 @@ def import_tfmodisco_motifs(tfm_results_hdf5):
                 cwm = pattern["task0_contrib_scores"]["fwd"][:]
                 
                 # Check that the contribution scores are overall positive
-                if np.sum(cwm) < 0:
+                if pos_contrib_only and np.sum(cwm) < 0:
                     continue
 
-                pfms.append(pfm)
-                cwms.append(cwm)
+                # Check that there is some window of minimum IC
+                ic = pfm_info_content(pfm)
+                max_windowed_ic = max(
+                    np.sum(ic[i : (i + ic_window)])
+                    for i in range(len(ic) - ic_window + 1)
+                )
+                if max_windowed_ic / ic_window < min_ic:
+                    continue
+
+                # Trim the motif
+                ic_trim_thresh = np.max(ic) * trim_flank_ic_frac
+                pass_inds = np.where(ic >= ic_trim_thresh)[0]
+                trimmed_pfm = pfm[np.min(pass_inds): np.max(pass_inds) + 1]
+                trimmed_cwm = cwm[np.min(pass_inds): np.max(pass_inds) + 1]
+
+                pfms.append(trimmed_pfm)
+                cwms.append(trimmed_cwm)
                 num_seqlets.append(len(seqlets))
                 
     return pfms, cwms, num_seqlets
