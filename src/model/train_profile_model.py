@@ -100,25 +100,44 @@ def config(dataset):
     revcomp = dataset["revcomp"]
 
 
-def get_profile_loss_function(num_tasks, profile_length):
+def get_profile_loss_function(num_tasks, profile_length, task_inds=None):
     """
     Returns a _named_ profile loss function. When saving the model, Keras will
     use "profile_loss" as the name for this loss function.
-    """
+    `task_inds` is a single index or list of task indices, of which task(s) to
+    get the loss for. Defaults to all tasks.
+    """ 
+    if task_inds is not None:
+        if type(task_inds) is int:
+            inds = [task_inds]
+        else:
+            inds = list(task_inds)
+        task_inds = tf.convert_to_tensor(inds)
+
     def profile_loss(true_vals, pred_vals):
         return profile_models.profile_loss(
-            true_vals, pred_vals, num_tasks, profile_length
+            true_vals, pred_vals, num_tasks, profile_length, task_inds=task_inds
         )
     return profile_loss
 
 
-def get_count_loss_function(num_tasks):
+def get_count_loss_function(num_tasks, task_inds=None):
     """
     Returns a _named_ count loss function. When saving the model, Keras will
     use "count_loss" as the name for this loss function.
+    `task_inds` is a single index or list of task indices, of which task(s) to
+    get the loss for. Defaults to all tasks.
     """
+    if task_inds is not None:
+        if type(task_inds) is int:
+            inds = [task_inds]
+        else:
+            inds = list(task_inds)
+        task_inds = tf.convert_to_tensor(inds)
+
     def count_loss(true_vals, pred_vals):
-        return profile_models.count_loss(true_vals, pred_vals, num_tasks)
+        return profile_models.count_loss(
+            true_vals, pred_vals, num_tasks, task_inds=task_inds)
     return count_loss
 
 
@@ -126,7 +145,8 @@ def get_count_loss_function(num_tasks):
 def create_model(
     input_length, input_depth, profile_length, num_tasks, num_dil_conv_layers,
     dil_conv_filter_sizes, dil_conv_stride, dil_conv_dilations, dil_conv_depths,
-    prof_conv_kernel_size, prof_conv_stride, counts_loss_weight, learning_rate
+    prof_conv_kernel_size, prof_conv_stride, counts_loss_weight, learning_rate,
+    task_inds=None
 ):
     """
     Creates and compiles profile model using the configuration above.
@@ -148,8 +168,8 @@ def create_model(
     prof_model.compile(
         keras.optimizers.Adam(lr=learning_rate),
         loss=[
-            get_profile_loss_function(num_tasks, profile_length),
-            get_count_loss_function(num_tasks),
+            get_profile_loss_function(num_tasks, profile_length, task_inds),
+            get_count_loss_function(num_tasks, task_inds),
         ],
         loss_weights=[1, counts_loss_weight]
     )
@@ -166,8 +186,9 @@ def save_model(model, model_path):
 @train_ex.capture
 def load_model(model_path, num_tasks, profile_length):
     """
-    Imports the model saved at the given path.
-    """
+    Imports the model saved at the given path. Imports the loss functions with
+    all tasks.
+    """ 
     custom_objects = {
         "kb": keras.backend,
         "profile_loss": get_profile_loss_function(num_tasks, profile_length),
@@ -283,7 +304,7 @@ def run_epoch(
 def train_model(
     train_enq, val_enq, test_summit_enq, test_peak_enq, test_genome_enq,
     num_workers, num_epochs, early_stopping, early_stop_hist_len,
-    early_stop_min_delta, train_seed, _run
+    early_stop_min_delta, train_seed, _run, task_inds=None, starting_model=None
 ):
     """
     Trains the network for the given training and validation data.
@@ -303,6 +324,14 @@ def train_model(
         `test_genome_enq` (OrderedEnqueuer's generator): a data loader for the
             test data, with summit-centered coordinates with sampled negatives,
             each batch giving the 1-hot encoded sequence, profiles, and statuses
+        `task_inds`: a single index or a list of 0-indexed indices denoting
+            which tasks to train on; defaults to all tasks
+        `starting_model`: a compiled Keras model of the correct size/dimensions
+            to train on; if specified, this model will be used instead of
+            creating a new one
+    Returns the following items in this order: run ID/number, output directory,
+    1-indexed epoch of best validation loss, the value of the best validation
+    loss, and the path to the model of the best validation loss.
     """
     run_num = _run._id
     output_dir = os.path.join(MODEL_DIR, str(run_num))
@@ -310,8 +339,12 @@ def train_model(
     if train_seed:
         tf.set_random_seed(train_seed)
 
-    model = create_model()
+    if starting_model is None:
+        model = create_model(task_inds=task_inds)
+    else:
+        model = starting_model
 
+    all_val_epoch_losses = []
     if early_stopping:
         val_epoch_loss_hist = []
 
@@ -340,6 +373,7 @@ def train_model(
 
         v_batch_losses = run_epoch(val_gen, val_num_batches, "eval", model)
         v_epoch_loss = util.nan_mean(v_batch_losses)
+        all_val_epoch_losses.append(v_epoch_loss)
         print(
             "Valid epoch %d: %6.10f average loss" % (
                 epoch + 1, v_epoch_loss
@@ -375,11 +409,21 @@ def train_model(
                 if best_delta < early_stop_min_delta:
                     break  # Not improving enough
 
+
+    if all_val_epoch_losses:
+        best_epoch = np.argmin(all_val_epoch_losses) + 1  # 1-indexed best epoch
+        best_val_epoch_loss = all_val_epoch_losses[best_epoch - 1]
+        best_model_path = os.path.join(
+            output_dir, "model_ckpt_epoch_%d.h5" % best_epoch
+        )
+    else:
+        best_epoch, best_val_epoch_loss, best_model_path = -1, float("inf"), ""
+
     # Compute evaluation metrics and log them
     for data_enq, prefix in [
         (test_summit_enq, "summit"), # (test_peak_enq, "peak"), (test_val_enq, "genomewide")
     ]:
-        print("Computing validation metrics, %s:" % prefix)
+        print("Computing test metrics, %s:" % prefix)
         data_enq.start(num_workers, num_workers * 2)
         data_gen = data_enq.get()
         data_num_batches = len(data_enq.sequence)
@@ -397,11 +441,41 @@ def train_model(
         del log_pred_profs, log_pred_counts, true_profs, true_counts
         del metrics
 
+    return run_num, output_dir, best_epoch, best_val_epoch_loss, best_model_path
+
 
 @train_ex.command
 def run_training(
-    peak_beds, profile_hdf5, train_chroms, val_chroms, test_chroms
+    peak_beds, profile_hdf5, train_chroms, val_chroms, test_chroms,
+    task_inds=None, starting_model=None
 ):
+    """
+    Trains the network given the dataset in the form of peak BEDs and a profile
+    HDF5.
+    Arguments:
+        `peak_beds`: a list of paths to ENCODE NarrowPeak BED files containing
+            peaks to train on, to be passed to data loader creation
+        `profile_hdf5`: path to HDF5 containing training and control profiles,
+            to be passed to data loader creation
+        `train_chroms`: list of chromosomes for training set
+        `val_chroms`: list of chromosomes for validation set
+        `test_chroms`: list of chromosomes for test set
+        `task_inds`: a single index or a list of 0-indexed indices denoting
+            which tasks to train on; defaults to all tasks
+        `starting_model`: a compiled Keras model of the correct size/dimensions
+            to train on; if specified, this model will be used instead of
+            creating a new one (the size/dimensions must be consistent with
+            `num_tasks` and `task_inds`
+    Returns the following items in this order: run ID/number, output directory,
+    1-indexed epoch of best validation loss, the value of the best validation
+    loss, and the path to the model of the best validation loss.
+    """
+    if task_inds is not None:
+        if type(task_inds) is int:
+            peak_beds = [peak_beds[task_inds]]
+        else:
+            peak_beds = [peak_beds[i] for i in task_inds]
+
     train_dataset = make_profile_dataset.create_data_loader(
         peak_beds, profile_hdf5, "SamplingCoordsBatcher", chrom_set=train_chroms
     )
@@ -427,15 +501,16 @@ def run_training(
             test_genome_dataset
         ]
     ]
-    train_model(
-        train_enq, val_enq, test_summit_enq, test_peak_enq, test_genome_enq
+    return train_model(
+        train_enq, val_enq, test_summit_enq, test_peak_enq, test_genome_enq,
+        task_inds=task_inds, starting_model=starting_model
     )
 
 
 @train_ex.automain
 def main():
     import json
-    paths_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/TEAD4/TEAD4_training_paths.json"
+    paths_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/SPI1/SPI1_training_paths.json"
     with open(paths_json_path, "r") as f:
         paths_json = json.load(f)
 
@@ -450,4 +525,12 @@ def main():
         splits_json["1"]["train"], splits_json["1"]["val"], \
         splits_json["1"]["test"]
 
-    run_training(peak_beds, profile_hdf5, train_chroms, val_chroms, test_chroms)
+    run_num, output_dir, best_epoch, best_val_loss, best_model_path = \
+        run_training(
+            peak_beds, profile_hdf5, train_chroms, val_chroms, test_chroms
+        )
+    print("Run number: %s" % run_num)
+    print("Output directory: %s" % output_dir)
+    print("Best epoch (1-indexed): %d" % best_epoch)
+    print("Best validation loss: %f" % best_val_loss)
+    print("Path to best model: %s" % best_model_path)

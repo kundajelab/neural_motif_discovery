@@ -107,40 +107,25 @@ class CoordsToVals:
             on both sides to this length to get the final profile; if this is
             smaller than the coordinate interval given, then the interval will
             be cut to this size by centering
-        `task_inds`: a list of 0-indexed indices denoting which tasks to return
-            values for; the order of the indices determines the order of the
-            tasks returned; defaults to all tasks in the HDF5, in the stored
-            order
     """
-    def __init__(self, hdf5_path, center_size_to_use, task_inds=None):
+    def __init__(self, hdf5_path, center_size_to_use):
         self.hdf5_path = hdf5_path
         self.center_size_to_use = center_size_to_use
-        if task_inds:
-            self.task_inds = np.array(task_inds)
-        else:
-            self.task_inds = None
 
     def _get_profile(self, chrom, start, end, hdf5_reader):
         """
         Fetches the profile for the given coordinates, with an instantiated
         HDF5 reader. Returns the profile as a NumPy array of numbers. This may
-        pad or cut from the center to a specified length. Profiles matching
-        the specified task indices are returned in the given order, if
-        applicable.
+        pad or cut from the center to a specified length.
         """
         if self.center_size_to_use:
             center = int(0.5 * (start + end))
             half_size = int(0.5 * self.center_size_to_use)
             left = center - half_size
             right = center + self.center_size_to_use - half_size
-            profiles = hdf5_reader[chrom][left:right]
+            return hdf5_reader[chrom][left:right]
         else:
-            profiles = hdf5_reader[chrom][start:end]
-        
-        if self.task_inds is not None:
-            return profiles[:, self.task_inds]
-        else:
-            return profiles
+            return hdf5_reader[chrom][start:end]
         
     def _get_ndarray(self, coords):
         """
@@ -174,9 +159,6 @@ class SamplingCoordsBatcher:
         `chrom_sizes_tsv`: path to 2-column TSV listing sizes of each chromosome
         `genome_sampler`: a GenomeIntervalSampler instance, which samples
             intervals randomly from the genome
-        `task_inds`: a list of 0-indexed indices denoting which tasks to fetch
-            coordinates from; the indices are for `pos_cords_beds`; defaults to
-            all tasks
         `chroms_keep`: if specified, only considers this set of chromosomes from
             the coordinate BEDs
         `return_peaks`: if True, returns the peaks and summits sampled from the
@@ -186,8 +168,8 @@ class SamplingCoordsBatcher:
     """
     def __init__(
         self, pos_coords_beds, input_length, batch_size, neg_ratio, jitter,
-        chrom_sizes_tsv, genome_sampler, task_inds=None, chroms_keep=None,
-        return_peaks=False, shuffle_before_epoch=False, seed=None
+        chrom_sizes_tsv, genome_sampler, chroms_keep=None, return_peaks=False,
+        shuffle_before_epoch=False, seed=None
     ):
         self.chroms_keep = chroms_keep
         self.batch_size = batch_size
@@ -196,9 +178,6 @@ class SamplingCoordsBatcher:
         self.genome_sampler = genome_sampler
         self.return_peaks = return_peaks
         self.shuffle_before_epoch = shuffle_before_epoch
-
-        if task_inds:
-            pos_coords_beds = [pos_coords_beds[i] for i in task_inds]
 
         # Read in the positive coordinates and make N x 7 array, where the
         # 7th column is the identifier of the source BED
@@ -318,9 +297,6 @@ class SummitCenteringCoordsBatcher(SamplingCoordsBatcher):
         `input_length`: length of input sequences to generate
         `batch_size`: number of samples per batch
         `chrom_sizes_tsv`: path to 2-column TSV listing sizes of each chromosome
-        `task_inds`: a list of 0-indexed indices denoting which tasks to fetch
-            coordinates from; the indices are for `pos_cords_beds`; defaults to
-            all tasks
         `chroms_keep`: if specified, only considers this set of chromosomes from
             the coordinate BEDs
         `return_peaks`: if True, returns the peaks and summits sampled from the
@@ -330,8 +306,8 @@ class SummitCenteringCoordsBatcher(SamplingCoordsBatcher):
     """
     def __init__(
         self, pos_coords_beds, input_length, batch_size, chrom_sizes_tsv,
-        task_inds=None, chroms_keep=None, return_peaks=False,
-        shuffle_before_epoch=False, seed=None
+        chroms_keep=None, return_peaks=False, shuffle_before_epoch=False,
+        seed=None
     ):
         # Same as a normal SamplingCoordsBatcher, but with no negatives and no
         # jitter, since the coordinates in the positive coordinate BEDs are
@@ -343,7 +319,6 @@ class SummitCenteringCoordsBatcher(SamplingCoordsBatcher):
             neg_ratio=0,
             jitter=0,
             chrom_sizes_tsv=chrom_sizes_tsv,
-            task_inds=task_inds,
             genome_sampler=None,
             chroms_keep=chroms_keep,
             return_peaks=return_peaks,
@@ -363,9 +338,6 @@ class PeakTilingCoordsBatcher(SamplingCoordsBatcher):
         `stride`: amount of stride when tiling the coordinates
         `batch_size`: number of samples per batch
         `chrom_sizes_tsv`: path to 2-column TSV listing sizes of each chromosome
-        `task_inds`: a list of 0-indexed indices denoting which tasks to fetch
-            coordinates from; the indices are for `pos_cords_beds`; defaults to
-            all tasks
         `chroms_keep`: if specified, only considers this set of chromosomes from
             the coordinate BEDs
         `return_peaks`: if True, returns the peaks and summits sampled from the
@@ -375,7 +347,7 @@ class PeakTilingCoordsBatcher(SamplingCoordsBatcher):
     """
     def __init__(
         self, pos_coords_beds, input_length, stride, batch_size,
-        chrom_sizes_tsv, task_inds=None, chroms_keep=None, return_peaks=False,
+        chrom_sizes_tsv, chroms_keep=None, return_peaks=False,
         shuffle_before_epoch=False, seed=None
     ):
         self.stride = stride
@@ -384,9 +356,6 @@ class PeakTilingCoordsBatcher(SamplingCoordsBatcher):
         self.chroms_keep = chroms_keep
         self.return_peaks = return_peaks
         self.shuffle_before_epoch = shuffle_before_epoch
-
-        if task_inds:
-            pos_coords_beds = [pos_coords_beds[i] for i in task_inds]
 
         # Read in the positive coordinates and make N x 4 array, containing only
         # cols 1, 4-6, which are the original peak chromosome, start/end, and
@@ -550,8 +519,8 @@ class CoordDataset(keras.utils.data_utils.Sequence):
 def create_data_loader(
     peaks_bed_paths, profile_hdf5_path, sampling_type, batch_size,
     reference_fasta, chrom_sizes, input_length, profile_length, negative_ratio,
-    peak_tiling_stride, revcomp, jitter_size, dataset_seed, task_inds=None,
-    chrom_set=None, shuffle=True, return_coords=False
+    peak_tiling_stride, revcomp, jitter_size, dataset_seed, chrom_set=None,
+    shuffle=True, return_coords=False
 ):
     """
     Creates an Keras Sequence object, which iterates through batches of
@@ -568,10 +537,6 @@ def create_data_loader(
             corresponds to sampling positive and negative regions, taking only
             positive regions centered around summits, and taking only positive
             regions tiled across peaks
-        `task_inds`: a list of 0-indexed indices denoting which tasks to return
-            labels for; the indices are for `peaks_bed_paths`, and must match
-            the tasks in the HDF5 at `profile_hdf5_path`; the order of indices
-            will determine the order of profiles returned; defaults to all tasks
         `chrom_set`: a list of chromosomes to restrict to for the positives and
             sampled negatives; defaults to all coordinates in the given BEDs and
             sampling over the entire genome
@@ -585,7 +550,7 @@ def create_data_loader(
     )
 
     # Maps set of coordinates to profiles
-    coords_to_vals = CoordsToVals(profile_hdf5_path, profile_length, task_inds)
+    coords_to_vals = CoordsToVals(profile_hdf5_path, profile_length)
 
     if sampling_type == "SamplingCoordsBatcher":
         # Randomly samples from genome
@@ -595,25 +560,23 @@ def create_data_loader(
         # Yields batches of positive and negative coordinates
         coords_batcher = SamplingCoordsBatcher(
             peaks_bed_paths, input_length, batch_size, negative_ratio,
-            jitter_size, chrom_sizes, genome_sampler, task_inds=task_inds,
-            chroms_keep=chrom_set, return_peaks=return_coords,
-            shuffle_before_epoch=shuffle, seed=dataset_seed
+            jitter_size, chrom_sizes, genome_sampler, chroms_keep=chrom_set,
+            return_peaks=return_coords, shuffle_before_epoch=shuffle,
+            seed=dataset_seed
         )
     elif sampling_type == "SummitCenteringCoordsBatcher":
         # Yields batches of positive coordinates, centered at summits
         coords_batcher = SummitCenteringCoordsBatcher(
             peaks_bed_paths, input_length, batch_size, chrom_sizes,
-            task_inds=task_inds, chroms_keep=chrom_set,
-            return_peaks=return_coords, shuffle_before_epoch=shuffle,
-            seed=dataset_seed
+            chroms_keep=chrom_set, return_peaks=return_coords,
+            shuffle_before_epoch=shuffle, seed=dataset_seed
         )
     else:
         # Yields batches of positive coordinates, tiled across peaks
         coords_batcher = PeakTilingCoordsBatcher(
             peaks_bed_paths, input_length, peak_tiling_stride, batch_size,
-            chrom_sizes, task_inds=task_inds, chroms_keep=chrom_set,
-            return_peaks=return_coords, shuffle_before_epoch=shuffle,
-            seed=dataset_seed
+            chrom_sizes, chroms_keep=chrom_set, return_peaks=return_coords,
+            shuffle_before_epoch=shuffle, seed=dataset_seed
         )
 
     # Maps set of coordinates to 1-hot encoding, padded
@@ -653,7 +616,7 @@ def main():
 
     data_loader = create_data_loader(
         peaks_bed_files, profile_hdf5_file, "SamplingCoordsBatcher",
-        return_coords=True, task_inds=[0, 1, 2, 3], chrom_set=all_chroms
+        return_coords=True, chrom_set=all_chroms
     )
 
     start_time = datetime.now()

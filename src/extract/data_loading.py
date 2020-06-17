@@ -56,7 +56,7 @@ def get_positive_inputs(files_spec_path, chrom_set=None, task_indices=None):
         files_spec = json.load(f)
     peaks = []
     peaks_beds = files_spec["peak_beds"]
-    if task_indices:
+    if task_indices is not None:
         peaks_beds = [peaks_beds[i] for i in task_indices]
     for peaks_bed in peaks_beds:
         table = pd.read_csv(

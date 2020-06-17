@@ -254,7 +254,8 @@ def profile_logits_to_log_probs(logit_pred_profs, axis=2):
 
 
 def profile_loss(
-    true_prof_counts, logit_pred_profs, num_tasks, profile_length
+    true_prof_counts, logit_pred_profs, num_tasks, profile_length,
+    task_inds=None
 ):
     """
     Returns the loss of the correctness off the predicted profiles. The profile
@@ -270,8 +271,16 @@ def profile_loss(
             profile _logits_
         `num_tasks`: the number of tasks T
         `profile_length`: the length of the profile outputs O
+        `task_inds`: a tensor of 0-indexed indices denoting which tasks to
+            compute the loss for; defaults to all tasks
     Returns a scalar loss tensor.
     """
+    if task_inds is not None:
+        # Limit to a subset of tasks
+        true_prof_counts = tf.gather(true_prof_counts, task_inds, axis=1)
+        logit_pred_profs = tf.gather(logit_pred_profs, task_inds, axis=1)
+        num_tasks = tf.size(task_inds)
+
     # Convert logits to log probabilities
     log_pred_profs = profile_logits_to_log_probs(logit_pred_profs)
     # Shape: B x T x O x 2
@@ -302,7 +311,7 @@ def profile_loss(
     return prof_loss
 
 
-def count_loss(true_counts, log_pred_counts, num_tasks):
+def count_loss(true_counts, log_pred_counts, num_tasks, task_inds):
     """
     Returns the loss of the correctness off the predicted read counts. The count
     loss is a simple mean squared error on the log counts.
@@ -311,8 +320,16 @@ def count_loss(true_counts, log_pred_counts, num_tasks):
         `log_pred_counts`: a B x T x 2 tensor containing the predicted log
             read counts
         `num_tasks`: the number of tasks T
+        `task_inds`: a tensor of 0-indexed indices denoting which tasks to
+            compute the loss for; defaults to all tasks
     Returns a scalar loss tensor.
     """
+    if task_inds is not None:
+        # Limit to a subset of tasks
+        true_counts = tf.gather(true_counts, task_inds, axis=1)
+        log_pred_counts = tf.gather(log_pred_counts, task_inds, axis=1)
+        num_tasks = tf.size(task_inds)
+
     true_counts = tf.reshape(true_counts, (-1, num_tasks * 2))
     log_pred_counts = tf.reshape(log_pred_counts, (-1, num_tasks * 2))
     # Shape: B x 2T
