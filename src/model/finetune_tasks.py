@@ -1,105 +1,194 @@
 import model.train_profile_model as train_profile_model
-import feature.make_profile_dataset as make_profile_dataset
-import extract.data_loading as data_loading
+import tensorflow as tf
 import keras.optimizers
-import keras.utils
+import keras.layers as kl
+import keras.models as km
+import keras.backend as kb
 import numpy as np
-import sacred
 import os
 import json
-import tqdm
 import copy
 import multiprocessing
 import click
+import tempfile
 
-def get_counts_loss_weight(
-    files_spec_path, chrom_splits_path, fold_num, num_tasks, profile_length,
-    task_inds=None
+
+def expand_model_capacity(
+    starting_model_path, save_model_path, num_tasks, profile_length
 ):
     """
-    Figures out a good counts loss weight by examining the number of reads in
-    training-set peaks. The counts loss weight is set to be 1/10 of the median
-    number of reads (over training-set peaks, and over all tasks and strands).
+    Takes a trained model as defined by `profile_models.py`, and expands the
+    capacity in the profile and counts output heads. Saves the new model, which
+    has the same base layers, but different output head layers.
     Arguments:
-        `files_spec_path`: path to JSON that defines paths to peak BEDs and
-            profile HDF5
-        `chrom_splits_path`: path to JSON that defines chromosome splits
-        `fold_num`: fold to use; this defines the training set chromosomes
-        `num_tasks`: number of tasks in total for this dataset
-        `profile_length`: length of profiles
-        `task_inds`: if given, a single task index or a list of task indices to
-            focus on
+        `starting_model_path`: path to a starting model, with architecture
+            defined by `profile_models.py`
+        `save_model_path`: path to save the model with the same beginning layer
+            weights, but with more added capacity
+        `num_tasks`: number of tasks total in starting model
+        `profile_length`: length of profile predictions in starting model
     """
-    if task_inds is not None:
-        if type(task_inds) is int:
-            task_inds = np.array([task_inds])
-        else:
-            task_inds = np.array(task_inds)
-
-    with open(files_spec_path, "r") as f:
-        files_spec = json.load(f)
-    profile_hdf5 = files_spec["profile_hdf5"]
-
-    with open(chrom_splits_path, "r") as f:
-        chrom_splits = json.load(f)
-    train_chroms = chrom_splits[str(fold_num)]["train"]
-
-    coords_to_vals = make_profile_dataset.CoordsToVals(
-        profile_hdf5, profile_length
-    )
-    coords = data_loading.get_positive_inputs(
-        files_spec_path, chrom_set=train_chroms, task_indices=task_inds
+    starting_model = train_profile_model.load_model(
+        starting_model_path, num_tasks, profile_length
     )
 
-    batch_size = 128
-    num_batches = int(np.ceil(len(coords) / batch_size))
-    # Run through all peak regions, and count the true reads
-    read_counts = []
-    for i in tqdm.trange(num_batches, desc="Computing optimal counts weight"):
-        batch = slice(i * batch_size, (i + 1) * batch_size)
-        profiles = coords_to_vals(coords[batch])  # Shape: B x L x S x 2
-        profiles = np.swapaxes(profiles, 1, 2)  # Shape: B x S x L x 2
-        # Assume that the indices in `task_inds` match the desired profiles in
-        # `profiles`; this assumption holds whether or not there are control
-        # profiles in this array
+    # Some constants
+    prof_conv_kernel_size_1 = 75
+    prof_conv_kernel_size_2 = 15  # New
+    count_conv_kernel_size_1 = 75  # New
+    count_conv_kernel_size_2 = 15  # New
 
-        task_profiles = profiles[:, task_inds]  # B x T' x L x 2
-        read_counts.append(np.ravel(np.sum(task_profiles, axis=2)))
-        # We'll aggregate over all peaks, tasks, and strands
-    read_counts = np.concatenate(read_counts)
-    return np.median(read_counts) / 10
+    # Extract tensors from pretrained model
+    cont_profs = starting_model.inputs[1]  # Shape: B x T x O x 2
+    # Output of dilated convolutional layers:
+    dil_conv_crop_out = starting_model.get_layer("dil_conv_crop").output
+    # Shape: B x X x P
+
+    cont_profs_perm = kl.Lambda(
+        lambda x: kb.permute_dimensions(x, (0, 2, 1, 3))
+    )(cont_profs)  # Shape: B x O x T x 2
+
+    # Branch A: profile prediction
+    # A1. Perform convolution with a large kernel
+    prof_conv_1 = kl.Conv1D(
+        filters=(num_tasks * 2), kernel_size=prof_conv_kernel_size_1,
+        padding="valid", name="prof_conv_1"
+    )
+    prof_conv_1_out = prof_conv_1(dil_conv_crop_out)  # B x O x 2T
+
+    # A2. Concatenate with the control profiles
+    # Reshaping is necessary to ensure the tasks are paired together
+    prof_conv_1_out = kl.Reshape((-1, num_tasks, 2))(
+        prof_conv_1_out
+    )  # Shape: B x O x T x 2
+    prof_with_cont = kl.Concatenate(axis=3)(
+        [prof_conv_1_out, cont_profs_perm]
+    )  # Shape: B x O x T x 4
+
+    # The next steps are done for each task separately, over the concatenated
+    # profiles with controls; there are T sets of convolutions
+    prof_one_conv_out_arr = []
+    for i in range(num_tasks):
+        # A3. A second convolution with a smaller kernel over tasks and controls
+        prof_conv_2 = kl.Conv1D(
+            filters=4, kernel_size=prof_conv_kernel_size_2,
+            padding="same", name=("prof_conv_2_%d" % (i + 1))
+        )
+        # Same padding will cause zeros to be padded on the outside, which may
+        # be somewhat suboptimal
+        task_slicer = kl.Lambda(lambda x: x[:, :, i, :])
+        prof_conv_2_out = prof_conv_2(task_slicer(prof_with_cont))
+        # Shape: B x O x 4
+
+        # A4. Perform length-1 convolutions to get the final profile output
+        prof_one_conv = kl.Conv1D(
+            filters=2, kernel_size=1, padding="valid",
+            name=("prof_one_conv_%d" % (i + 1))
+        )
+        prof_one_conv_out = prof_one_conv(prof_conv_2_out)  # Shape: B x O x 2
+        prof_one_conv_out_arr.append(prof_one_conv_out)
+
+    # Recombine the tasks into a single tensor of profile predictions
+    if num_tasks > 1:
+        prof_pred = kl.Lambda(
+            lambda x: kb.stack(x, axis=1)
+        )(prof_one_conv_out_arr)  # Shape: B x T x O x 2
+    else:
+        prof_pred = kl.Reshape(
+            (num_tasks, profile_length, 2)
+        )(prof_one_conv_out_arr[0])  # Shape: B x 1 x O x 2
+
+    # Branch B: read count prediction
+    # B1. Perform convolution with a large kernel
+    count_conv_1 = kl.Conv1D(
+        filters=(num_tasks * 2), kernel_size=count_conv_kernel_size_1,
+        padding="valid", name="count_conv_1"
+    )
+    count_conv_1_out = count_conv_1(dil_conv_crop_out)  # B x O x 2T
+
+    # B2. Concatenate with the control profiles
+    # Reshaping is necessary to ensure the tasks are paired together
+    count_conv_1_out = kl.Reshape((-1, num_tasks, 2))(
+        count_conv_1_out
+    )  # Shape: B x O x T x 2
+    count_with_cont = kl.Concatenate(axis=3)(
+        [count_conv_1_out, cont_profs_perm]
+    )  # Shape: B x O x T x 4
+
+    # The next steps are done for each task separately, over the concatenated
+    # profiles with controls; there are T sets of convolutions
+    count_dense_out_arr = []
+    for i in range(num_tasks):
+        # B3. A second convolution with a smaller kernel over tasks and controls
+        count_conv_2 = kl.Conv1D(
+            filters=4, kernel_size=count_conv_kernel_size_2,
+            padding="valid", name=("count_conv_2_%d" % (i + 1))
+        )
+        task_slicer = kl.Lambda(lambda x: x[:, :, i, :])
+        count_conv_2_out = count_conv_2(task_slicer(count_with_cont))
+        # Shape: B x Y x 4
+
+        # Flatten
+        count_conv_2_out_flat = kl.Reshape((-1,))(count_conv_2_out)
+
+        # B4. A final dense layer (no activation) to predict the final counts
+        count_dense = kl.Dense(units=2, name=("count_dense_%d" % (i + 1)))
+        count_dense_out = count_dense(count_conv_2_out_flat)  # Shape: B x 2
+        count_dense_out_arr.append(count_dense_out)
+
+    # Recombine the tasks into a single tensor of count predictions
+    if num_tasks > 1:
+        count_pred = kl.Lambda(
+            lambda x: kb.stack(x, axis=1),
+            output_shape=(num_tasks, 2)
+        )(count_dense_out_arr)  # Shape: B x T x 2
+    else:
+        count_pred = kl.Reshape((num_tasks, 2))(count_dense_out_arr[0])
+        # Shape: B x 1 x 2
+
+    # Create model and save it
+    new_model = km.Model(
+        inputs=starting_model.inputs, outputs=[prof_pred, count_pred]
+    )  # Same inputs as before, but outputs are computed with extra capacity
+    train_profile_model.save_model(new_model, save_model_path)
 
 
 def prepare_model_for_finetune(
-    model_path, task_inds, num_tasks, counts_loss_weight, profile_length,
+    starting_model_path, task_inds, head, num_tasks, profile_length,
     learning_rate
 ):
     """
-    Imports a saved model, and prepares it for task-specific fine-tuning. This
-    involves recompiling the model with task-specific loss functions,
+    Imports a saved multitask model, and prepares it for task-specific
+    fine-tuning. To do this, the model is reconfigured with more capacity in the
+    profile and counts output heads. recompiling the model with task-specific loss functions,
     reweighting the losses, and freezing the weights of the shared layers.
     Arguments:
         `model_path`: path to saved model
         `task_inds`: index of task (or list of indices) to fine-tune for
+        `head`: which output head to train on, either "profile" or "count"
         `num_tasks`: number of tasks total in model
-        `counts_loss_weight`: amount of weight counts loss relative to profile
-            loss
         `profile_length`: length of profiles
         `learning_rate`: learning rate for loss function
     Returns a model object ready for fine-tuning.
     """
+    assert head in ("profile", "count")
+
     # Import model
     model = train_profile_model.load_model(
-        model_path, num_tasks, profile_length
+        starting_model_path, num_tasks, profile_length
     )
-    
+   
     profile_loss = train_profile_model.get_profile_loss_function(
         num_tasks, profile_length, task_inds
     )
     count_loss = train_profile_model.get_count_loss_function(
         num_tasks, task_inds
     )
-    
+    if head == "profile":
+        loss_weights = [1, 0]
+    else:
+        loss_weights = [0, 1]
+
     # Freeze shared layers
     for i in range(7):
         model.get_layer("dil_conv_%d" % (i + 1)).trainable = False
@@ -108,7 +197,7 @@ def prepare_model_for_finetune(
     model.compile(
         keras.optimizers.Adam(lr=learning_rate),
         loss=[profile_loss, count_loss],
-        loss_weights=[1, counts_loss_weight]
+        loss_weights=loss_weights
     )
     return model
 
@@ -129,28 +218,29 @@ def deep_update(parent, update):
 
 
 def run_fine_tune(
-    last_model_path, task_ind, num_tasks, counts_loss_weight, profile_length,
+    starting_model_path, task_ind, head, num_tasks, profile_length,
     learning_rate, config_update, queue
 ):
-    last_model = prepare_model_for_finetune(
-        last_model_path, task_ind, num_tasks, counts_loss_weight,
-        profile_length, learning_rate
+    starting_model = prepare_model_for_finetune(
+        starting_model_path, task_ind, head, num_tasks, profile_length,
+        learning_rate
     )
 
     updates = copy.deepcopy(config_update)
-    updates["counts_loss_weight"] = counts_loss_weight
-    updates["starting_model"] = last_model
+    updates["starting_model"] = starting_model
     updates["task_inds"] = task_ind
 
     run_result = train_profile_model.train_ex.run(
         "run_training", config_updates=updates
     )
+
     queue.put(run_result.result)
 
 
 def fine_tune_tasks(
     starting_model_path, num_tasks, files_spec_path, chrom_splits_path,
-    fold_num, profile_length, learning_rate, base_config={}
+    fold_num, profile_length, profile_learning_rate, count_learning_rate,
+    base_config={}
 ):
     """
     Performs model fine-tuning on each task in a pre-trained model. This will
@@ -164,7 +254,8 @@ def fine_tune_tasks(
         `chrom_splits_path`: path to JSON that defines chromosome splits
         `fold_num`: fold to use; this defines the training set chromosomes
         `profile_length`: length of profiles
-        `learning_rate`: learning rate for loss function
+        `profile_learning_rate`: learning rate for profile loss tuning
+        `count_learning_rate`: learning rate for count loss tuning
         `base_config`: a configuration dictionary of updates to pass to model
             training experiment (e.g. number of epochs, etc.); this will over-
             ride anything given in the file specs
@@ -198,27 +289,32 @@ def fine_tune_tasks(
 
     last_model_path = starting_model_path
     for task_ind in range(num_tasks):
-        print("Fine-tuning task %d/%d" % (task_ind + 1, num_tasks), flush=True)
-
-        counts_loss_weight = get_counts_loss_weight(
-            files_spec_path, chrom_splits_path, fold_num, num_tasks,
-            profile_length, task_ind
-        )
-        print("\tFound counts loss weight: %f" % counts_loss_weight, flush=True)
-
-        queue = multiprocessing.Queue()
-        proc = multiprocessing.Process(
-            target=run_fine_tune, args=(
-                last_model_path, task_ind, num_tasks, counts_loss_weight,
-                profile_length, learning_rate, train_config, queue
+        for head in ("profile", "count"):
+            print(
+                "Fine-tuning task %d/%d, %s head" % \
+                    (task_ind + 1, num_tasks, head), flush=True
             )
-        )
-        proc.start()
-        proc.join()
-        run_num, output_dir, best_epoch, best_val_loss, best_model_path = \
-            queue.get()
-        print("\tBest fine-tuned model path: %s" % best_model_path, flush=True)
-        last_model_path = best_model_path
+
+            if head == "profile":
+                learning_rate = profile_learning_rate
+            else:
+                learning_rate = count_learning_rate
+
+            queue = multiprocessing.Queue()
+            proc = multiprocessing.Process(
+                target=run_fine_tune, args=(
+                    last_model_path, task_ind, head, num_tasks, profile_length,
+                    learning_rate, train_config, queue
+                )
+            )
+            proc.start()
+            proc.join()
+            run_num, output_dir, best_epoch, best_val_loss, best_model_path = \
+                queue.get()
+            print(
+                "\tBest fine-tuned model path: %s" % best_model_path, flush=True
+            )
+            last_model_path = best_model_path
 
 
 @click.command()
@@ -247,17 +343,24 @@ def fine_tune_tasks(
     help="Length of output profiles; used to compute read density"
 )
 @click.option(
-    "--learning-rate", "-r", nargs=1, default=0.004,
-    help="Learning rate for task-specific fine-tuning"
+    "--profile-learning-rate", "-plr", nargs=1, default=0.004,
+    help="Learning rate for task-specific fine-tuning of the profile head"
+)
+@click.option(
+    "--count-learning-rate", "-clr", nargs=1, default=0.04,
+    help="Learning rate for task-specific fine-tuning of the count head"
 )
 @click.option(
     "--config-json-path", "-c", nargs=1, default=None,
     help="Path to a config JSON file for Sacred"
 )
+@click.argument(
+    "config_cli_tokens", nargs=-1
+)
 def main(
     file_specs_json_path, chrom_split_json_path, chrom_split_key,
-    starting_model_path, num_tasks, profile_length, learning_rate,
-    config_json_path
+    starting_model_path, num_tasks, profile_length, profile_learning_rate,
+    count_learning_rate, config_json_path, config_cli_tokens
 ):
     """
     Fine-tunes a pre-trained model on each prediction task. When fine-tuning,
@@ -272,6 +375,7 @@ def main(
         if ok.lower() not in ("y", "yes"):
             print("Aborted")
             return
+        model_dir = None
     else:
         model_dir = os.environ["MODEL_DIR"]
         print("Using %s as directory to store model outputs" % model_dir)
@@ -282,18 +386,51 @@ def main(
             base_config = json.load(f)
     else:
         base_config = {}
-    
+
+    # Add in the configuration options supplied to commandline, overwriting the
+    # options in the config JSON (or file paths JSON) if needed
+    for token in config_cli_tokens:
+        key, val = token.split("=", 1)
+        try:
+            val = eval(val)
+        except (NameError, SyntaxError):
+            pass  # Keep as string
+        d = base_config
+        key_pieces = key.split(".")
+        for key_piece in key_pieces[:-1]:
+            if key_piece not in d:
+                d[key_piece] = {}
+            d = d[key_piece]
+        d[key_pieces[-1]] = val
+
     # Hoist up anything from "train" to top-level, since this will be passed to
     # that experiment
     if "train" in base_config:
         train_dict = base_config["train"]
-        del config_updates["train"]
+        del base_config["train"]
         deep_update(base_config, train_dict)
 
+    # Construct a new model with expanded capacity on top of the existing model
+    temp_dir = model_dir if model_dir else tempfile.mkdtemp()
+    new_model_path = os.path.join(temp_dir, "expanded_model.h5")
+    print("Constructing new expanded-capacity model at %s" % new_model_path)
+    # This needs to be in a new thread, otherwise Keras will have problems with
+    # the devices (particularly, a "Failed to get device properties" error)
+    # The issue manifests when the original non-expanded model is imported, and
+    # the new expanded model is imported after that
+    proc = multiprocessing.Process(
+        target=expand_model_capacity, args=(
+            starting_model_path, new_model_path, num_tasks, profile_length
+        )
+    )
+    proc.start()
+    proc.join()
+
+    print("Beginning fine-tuning")
     fine_tune_tasks(
-        starting_model_path, num_tasks, file_specs_json_path,
-        chrom_split_json_path, chrom_split_key, profile_length, learning_rate,
-        base_config=base_config
+        new_model_path, num_tasks, file_specs_json_path, chrom_split_json_path,
+        chrom_split_key, profile_length, profile_learning_rate,
+        count_learning_rate, base_config=base_config
     )
 
 
