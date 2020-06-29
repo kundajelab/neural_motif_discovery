@@ -52,7 +52,7 @@ def expand_model_capacity(
     # A1. Perform convolution with a large kernel
     prof_conv_1 = kl.Conv1D(
         filters=(num_tasks * 2), kernel_size=prof_conv_kernel_size_1,
-        padding="valid", name="prof_conv_1"
+        padding="valid", name="prof_conv_1", activation="relu"
     )
     prof_conv_1_out = prof_conv_1(dil_conv_crop_out)  # B x O x 2T
 
@@ -72,7 +72,8 @@ def expand_model_capacity(
         # A3. A second convolution with a smaller kernel over tasks and controls
         prof_conv_2 = kl.Conv1D(
             filters=4, kernel_size=prof_conv_kernel_size_2,
-            padding="same", name=("prof_conv_2_%d" % (i + 1))
+            padding="same", name=("prof_conv_2_%d" % (i + 1)),
+            activation="relu"
         )
         # Same padding will cause zeros to be padded on the outside, which may
         # be somewhat suboptimal
@@ -102,7 +103,7 @@ def expand_model_capacity(
     # B1. Perform convolution with a large kernel
     count_conv_1 = kl.Conv1D(
         filters=(num_tasks * 2), kernel_size=count_conv_kernel_size_1,
-        padding="valid", name="count_conv_1"
+        padding="valid", name="count_conv_1", activation="relu"
     )
     count_conv_1_out = count_conv_1(dil_conv_crop_out)  # B x O x 2T
 
@@ -121,19 +122,21 @@ def expand_model_capacity(
     for i in range(num_tasks):
         # B3. A second convolution with a smaller kernel over tasks and controls
         count_conv_2 = kl.Conv1D(
-            filters=4, kernel_size=count_conv_kernel_size_2,
-            padding="valid", name=("count_conv_2_%d" % (i + 1))
+            filters=16, kernel_size=count_conv_kernel_size_2,
+            padding="valid", name=("count_conv_2_%d" % (i + 1)),
+            activation="relu"
         )
         task_slicer = kl.Lambda(lambda x: x[:, :, i, :])
         count_conv_2_out = count_conv_2(task_slicer(count_with_cont))
-        # Shape: B x Y x 4
+        # Shape: B x Y x 16
 
-        # Flatten
-        count_conv_2_out_flat = kl.Reshape((-1,))(count_conv_2_out)
+        # Average pooling
+        pool = kl.GlobalAveragePooling1D()
+        pool_out = pool(count_conv_2_out)  # Shape: B x 16
 
         # B4. A final dense layer (no activation) to predict the final counts
         count_dense = kl.Dense(units=2, name=("count_dense_%d" % (i + 1)))
-        count_dense_out = count_dense(count_conv_2_out_flat)  # Shape: B x 2
+        count_dense_out = count_dense(pool_out)  # Shape: B x 2
         count_dense_out_arr.append(count_dense_out)
 
     # Recombine the tasks into a single tensor of count predictions
@@ -240,7 +243,7 @@ def run_fine_tune(
 def fine_tune_tasks(
     starting_model_path, num_tasks, files_spec_path, chrom_splits_path,
     fold_num, profile_length, profile_learning_rate, count_learning_rate,
-    base_config={}
+    num_runs, base_config={}
 ):
     """
     Performs model fine-tuning on each task in a pre-trained model. This will
@@ -256,6 +259,9 @@ def fine_tune_tasks(
         `profile_length`: length of profiles
         `profile_learning_rate`: learning rate for profile loss tuning
         `count_learning_rate`: learning rate for count loss tuning
+        `num_runs`: number of runs for each fine-tuning task; only the model
+            with the best validation loss over the random initializations is
+            kept
         `base_config`: a configuration dictionary of updates to pass to model
             training experiment (e.g. number of epochs, etc.); this will over-
             ride anything given in the file specs
@@ -300,17 +306,24 @@ def fine_tune_tasks(
             else:
                 learning_rate = count_learning_rate
 
-            queue = multiprocessing.Queue()
-            proc = multiprocessing.Process(
-                target=run_fine_tune, args=(
-                    last_model_path, task_ind, head, num_tasks, profile_length,
-                    learning_rate, train_config, queue
+            best_model_path, best_val_loss = None, None
+            for attempt in range(1, num_runs + 1):
+                print("Run %d" % attempt)
+                queue = multiprocessing.Queue()
+                proc = multiprocessing.Process(
+                    target=run_fine_tune, args=(
+                        last_model_path, task_ind, head, num_tasks,
+                        profile_length, learning_rate, train_config, queue
+                    )
                 )
-            )
-            proc.start()
-            proc.join()
-            run_num, output_dir, best_epoch, best_val_loss, best_model_path = \
-                queue.get()
+                proc.start()
+                proc.join()
+                run_num, output_dir, best_epoch, val_loss, model_path = \
+                    queue.get()
+
+                if best_model_path is None or val_loss < best_val_loss:
+                    best_model_path, best_val_loss = model_path, val_loss
+
             print(
                 "\tBest fine-tuned model path: %s" % best_model_path, flush=True
             )
@@ -335,8 +348,12 @@ def fine_tune_tasks(
     help="Path to saved model to start on"
 )
 @click.option(
-    "--num-tasks", "-n", nargs=1, required=True, type=int,
+    "--num-tasks", "-t", nargs=1, required=True, type=int,
     help="Number of total tasks in model"
+)
+@click.option(
+    "--num-runs", "-n", nargs=1, default=3, type=int,
+    help="Number of random initializations/attempts for each fine-tuning task"
 )
 @click.option(
     "--profile-length", "-l", nargs=1, default=1000,
@@ -347,7 +364,7 @@ def fine_tune_tasks(
     help="Learning rate for task-specific fine-tuning of the profile head"
 )
 @click.option(
-    "--count-learning-rate", "-clr", nargs=1, default=0.04,
+    "--count-learning-rate", "-clr", nargs=1, default=0.01,
     help="Learning rate for task-specific fine-tuning of the count head"
 )
 @click.option(
@@ -359,8 +376,9 @@ def fine_tune_tasks(
 )
 def main(
     file_specs_json_path, chrom_split_json_path, chrom_split_key,
-    starting_model_path, num_tasks, profile_length, profile_learning_rate,
-    count_learning_rate, config_json_path, config_cli_tokens
+    starting_model_path, num_tasks, num_runs, profile_length,
+    profile_learning_rate, count_learning_rate, config_json_path,
+    config_cli_tokens
 ):
     """
     Fine-tunes a pre-trained model on each prediction task. When fine-tuning,
@@ -378,6 +396,7 @@ def main(
         model_dir = None
     else:
         model_dir = os.environ["MODEL_DIR"]
+        os.makedirs(model_dir, exist_ok=True)
         print("Using %s as directory to store model outputs" % model_dir)
 
     # Load in the configuration options supplied as a file
@@ -430,7 +449,7 @@ def main(
     fine_tune_tasks(
         new_model_path, num_tasks, file_specs_json_path, chrom_split_json_path,
         chrom_split_key, profile_length, profile_learning_rate,
-        count_learning_rate, base_config=base_config
+        count_learning_rate, num_runs, base_config=base_config
     )
 
 
