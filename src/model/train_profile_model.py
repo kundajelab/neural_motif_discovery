@@ -345,6 +345,7 @@ def train_model(
         model = starting_model
 
     all_val_epoch_losses = []
+    all_model_weights = []
     if early_stopping:
         val_epoch_loss_hist = []
 
@@ -387,6 +388,7 @@ def train_model(
             output_dir, "model_ckpt_epoch_%d.h5" % (epoch + 1)
         )
         save_model(model, savepath)
+        all_model_weights.append(model.get_weights())
 
         # If validation returned enough NaNs in a row, then stop
         if np.isnan(v_epoch_loss):
@@ -416,13 +418,16 @@ def train_model(
         best_model_path = os.path.join(
             output_dir, "model_ckpt_epoch_%d.h5" % best_epoch
         )
+        best_model_weights = all_model_weights[best_epoch - 1]
     else:
         best_epoch, best_val_epoch_loss, best_model_path = -1, float("inf"), ""
+        best_model_weights = model.get_weights()
 
     # Compute evaluation metrics and log them
     for data_enq, prefix in [
         (test_summit_enq, "summit"), # (test_peak_enq, "peak"), (test_val_enq, "genomewide")
     ]:
+        model.set_weights(best_model_weights)
         print("Computing test metrics, %s:" % prefix)
         data_enq.start(num_workers, num_workers * 2)
         data_gen = data_enq.get()
