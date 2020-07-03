@@ -1,4 +1,5 @@
 import model.train_profile_model as train_profile_model
+import model.spline as spline
 import tensorflow as tf
 import keras.optimizers
 import keras.layers as kl
@@ -44,6 +45,8 @@ def expand_model_capacity(
     dil_conv_crop_out = starting_model.get_layer("dil_conv_crop").output
     # Shape: B x X x P
 
+    cont_counts = kl.Lambda(lambda x: kb.sum(x, axis=2))(cont_profs)
+    # Shape: B x T x 2
     cont_profs_perm = kl.Lambda(
         lambda x: kb.permute_dimensions(x, (0, 2, 1, 3))
     )(cont_profs)  # Shape: B x O x T x 2
@@ -116,8 +119,8 @@ def expand_model_capacity(
         [count_conv_1_out, cont_profs_perm]
     )  # Shape: B x O x T x 4
 
-    # The next steps are done for each task separately, over the concatenated
-    # profiles with controls; there are T sets of convolutions
+    # # The next steps are done for each task separately, over the concatenated
+    # # profiles with controls; there are T sets of convolutions
     count_dense_out_arr = []
     for i in range(num_tasks):
         # B3. A second convolution with a smaller kernel over tasks and controls
@@ -130,11 +133,17 @@ def expand_model_capacity(
         count_conv_2_out = count_conv_2(task_slicer(count_with_cont))
         # Shape: B x Y x 16
 
-        # Average pooling
-        pool = kl.GlobalAveragePooling1D()
-        pool_out = pool(count_conv_2_out)  # Shape: B x 16
+        # B4. Weight the convolutional output with a learned spline
+        spline_weight = spline.SplineWeight1D(
+            num_bases=10, name=("spline_weight_%d" % (i + 1))
+        )
+        spline_weight_out = spline_weight(count_conv_2_out)
 
-        # B4. A final dense layer (no activation) to predict the final counts
+        # B5. Global average pooling
+        pool = kl.GlobalAveragePooling1D()
+        pool_out = pool(spline_weight_out)  # Shape: B x 16
+
+        # B6. A final dense layer (no activation) to predict the final counts
         count_dense = kl.Dense(units=2, name=("count_dense_%d" % (i + 1)))
         count_dense_out = count_dense(pool_out)  # Shape: B x 2
         count_dense_out_arr.append(count_dense_out)
@@ -166,7 +175,7 @@ def prepare_model_for_finetune(
     profile and counts output heads. recompiling the model with task-specific loss functions,
     reweighting the losses, and freezing the weights of the shared layers.
     Arguments:
-        `model_path`: path to saved model
+        `starting_model_path`: path to saved model
         `task_inds`: index of task (or list of indices) to fine-tune for
         `head`: which output head to train on, either "profile" or "count"
         `num_tasks`: number of tasks total in model
@@ -174,12 +183,7 @@ def prepare_model_for_finetune(
         `learning_rate`: learning rate for loss function
     Returns a model object ready for fine-tuning.
     """
-    assert head in ("profile", "count")
-
-    # Import model
-    model = train_profile_model.load_model(
-        starting_model_path, num_tasks, profile_length
-    )
+    assert head in ("profile", "count") 
    
     profile_loss = train_profile_model.get_profile_loss_function(
         num_tasks, profile_length, task_inds
@@ -191,6 +195,15 @@ def prepare_model_for_finetune(
         loss_weights = [1, 0]
     else:
         loss_weights = [0, 1]
+
+    custom_objects = {
+        "kb": kb,
+        "profile_loss": profile_loss,
+        "count_loss": count_loss,
+        "SplineWeight1D": spline.SplineWeight1D
+    }
+    # Import model
+    model = km.load_model(starting_model_path, custom_objects=custom_objects)
 
     # Freeze shared layers
     for i in range(7):
@@ -324,10 +337,17 @@ def fine_tune_tasks(
                 if best_model_path is None or val_loss < best_val_loss:
                     best_model_path, best_val_loss = model_path, val_loss
 
-            print(
-                "\tBest fine-tuned model path: %s" % best_model_path, flush=True
-            )
-            last_model_path = best_model_path
+            if not best_model_path:
+                print(
+                    "\tDid not find best model path; using previous path: %s" \
+                    % last_model_path, flush=True
+                )
+            else:
+                print(
+                    "\tBest fine-tuned model path: %s" % best_model_path,
+                    flush=True
+                )
+                last_model_path = best_model_path
 
 
 @click.command()
@@ -437,6 +457,7 @@ def main(
     # the devices (particularly, a "Failed to get device properties" error)
     # The issue manifests when the original non-expanded model is imported, and
     # the new expanded model is imported after that
+
     proc = multiprocessing.Process(
         target=expand_model_capacity, args=(
             starting_model_path, new_model_path, num_tasks, profile_length
