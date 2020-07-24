@@ -13,6 +13,130 @@ import multiprocessing
 import click
 import tempfile
 
+def keep_model_capacity(
+    starting_model_path, save_model_path, num_tasks, profile_length
+):
+    starting_model = train_profile_model.load_model(
+        starting_model_path, num_tasks, profile_length
+    )
+
+    # Some constants
+    prof_conv_kernel_size = 75
+
+    # Extract tensors from pretrained model
+    cont_profs = starting_model.inputs[1]  # Shape: B x T x O x 2
+    # Output of dilated convolutional layers:
+    dil_conv_crop_out = starting_model.get_layer("dil_conv_crop").output
+    # Shape: B x X x P
+
+    cont_profs_perm = kl.Lambda(
+        lambda x: kb.permute_dimensions(x, (0, 2, 1, 3))
+    )(cont_profs)  # Shape: B x O x T x 2
+
+    # Branch A: profile prediction
+    # A1. Perform convolution with a large kernel
+    prof_large_conv = kl.Conv1D(
+        filters=(num_tasks * 2), kernel_size=prof_conv_kernel_size,
+        padding="valid", name="prof_large_conv"
+    )
+    prof_large_conv_out = prof_large_conv(dil_conv_crop_out)  # B x O x 2T
+    prof_pred_size = prof_large_conv_out.shape[1]
+
+    assert prof_pred_size == profile_length, \
+        "Prediction length is specified to be %d, but with the given " +\
+        "input length of %d and the given convolutions, the computed " +\
+        "prediction length is %d" % \
+        (profile_length, input_length, prof_pred_size)
+   
+    # A2. Concatenate with the control profiles
+    # Reshaping is necessary to ensure the tasks are paired together
+    prof_large_conv_out = kl.Reshape((-1, num_tasks, 2))(
+        prof_large_conv_out
+    )  # Shape: B x O x T x 2
+    prof_with_cont = kl.Concatenate(axis=3)(
+        [prof_large_conv_out, cont_profs_perm]
+    )  # Shape: B x O x T x 4
+
+    # A3. Perform length-1 convolutions over the concatenated profiles with
+    # controls; there are T convolutions, each one is done over one pair of
+    # prof_large_conv_out, and a pair of controls; this done by looping over
+    # each task, and doing a 1D convolution on each
+    prof_one_conv_arr = [
+        kl.Conv1D(
+            filters=2, kernel_size=1, padding="valid",
+            name=("prof_one_conv_%d" % (i + 1))
+        ) for i in range(num_tasks)
+    ]
+    prof_slicer_arr = [
+        kl.Lambda(lambda x: x[:, :, i, :]) for i in range(num_tasks)
+    ]
+    prof_one_conv_out_arr = []
+    for i in range(num_tasks):
+        task_prof_large_conv_out = prof_slicer_arr[i](prof_with_cont)
+        # Shape: B x O x 4
+        prof_one_conv_out_arr.append(
+            prof_one_conv_arr[i](task_prof_large_conv_out)  # Shape: B x O x 2
+        )
+    
+    if num_tasks > 1:
+        prof_pred = kl.Lambda(
+            lambda x: kb.stack(x, axis=1)
+        )(prof_one_conv_out_arr)  # Shape: B x T x O x 2
+    else:
+        prof_pred = kl.Reshape(
+            (num_tasks, profile_length, 2)
+        )(prof_one_conv_out_arr[0])  # Shape: B x 1 x O x 2
+
+    # Branch B: read count prediction
+    # B1. Global average pooling across the output of dilated convolutions
+    count_pool = kl.GlobalAveragePooling1D(name="count_pool")
+    count_pool_out = count_pool(dil_conv_crop_out)  # Shape: B x P
+
+    # B2. Reduce pooling output to fewer features, a pair for each task
+    count_dense = kl.Dense(units=(num_tasks * 2), name="count_pair_dense")
+    count_dense_out = count_dense(count_pool_out)  # Shape: B x 2T
+
+    # B3. Concatenate with the control counts
+    # Reshaping is necessary to ensure the tasks are paired
+    cont_counts = kl.Lambda(lambda x: kb.sum(x, axis=2))(cont_profs)
+    # Shape: B x T x 2
+    count_dense_out = kl.Reshape((num_tasks, 2))(count_dense_out)  # Shape:
+    #   B x T x 2
+    count_with_cont = kl.Concatenate(axis=2)([count_dense_out, cont_counts])
+    # Shape: B x T x 4
+
+    # B4. Dense layer over the concatenation with control counts; each set
+    # of counts gets a different dense network
+    count_dense_arr = [
+        kl.Dense(units=2, name=("count_out_dense_%d" % (i + 1)))
+        for i in range(num_tasks)
+    ]
+    count_slicer_arr = [
+        kl.Lambda(lambda x: x[:, i, :]) for i in range(num_tasks)
+    ]
+    count_out_dense_arr = []
+    for i in range(num_tasks):
+        task_count_with_cont_out = count_slicer_arr[i](count_with_cont)
+        # Shape: B x 4
+        count_out_dense_arr.append(
+            count_dense_arr[i](task_count_with_cont_out)  # Shape: B x 2
+        )
+
+    if num_tasks > 1:
+        count_pred = kl.Lambda(
+            lambda x: kb.stack(x, axis=1),
+            output_shape=(num_tasks, 2)
+        )(count_out_dense_arr)  # Shape: B x T x 2
+    else:
+        count_pred = kl.Reshape((num_tasks, 2))(count_out_dense_arr[0])
+        # Shape: B x 1 x 2
+
+    # Create model
+    new_model = km.Model(
+        inputs=starting_model.inputs, outputs=[prof_pred, count_pred]
+    )
+    train_profile_model.save_model(new_model, save_model_path)
+
 
 def expand_model_capacity(
     starting_model_path, save_model_path, num_tasks, profile_length
@@ -38,6 +162,7 @@ def expand_model_capacity(
     prof_conv_kernel_size_2 = 15  # New
     count_conv_kernel_size_1 = 75  # New
     count_conv_kernel_size_2 = 15  # New
+    count_cont_conv_kernel_size = 15 # New
 
     # Extract tensors from pretrained model
     cont_profs = starting_model.inputs[1]  # Shape: B x T x O x 2
@@ -45,8 +170,6 @@ def expand_model_capacity(
     dil_conv_crop_out = starting_model.get_layer("dil_conv_crop").output
     # Shape: B x X x P
 
-    cont_counts = kl.Lambda(lambda x: kb.sum(x, axis=2))(cont_profs)
-    # Shape: B x T x 2
     cont_profs_perm = kl.Lambda(
         lambda x: kb.permute_dimensions(x, (0, 2, 1, 3))
     )(cont_profs)  # Shape: B x O x T x 2
@@ -58,21 +181,16 @@ def expand_model_capacity(
         padding="valid", name="prof_conv_1", activation="relu"
     )
     prof_conv_1_out = prof_conv_1(dil_conv_crop_out)  # B x O x 2T
-
-    # A2. Concatenate with the control profiles
-    # Reshaping is necessary to ensure the tasks are paired together
+    # Reshape to separate tasks
     prof_conv_1_out = kl.Reshape((-1, num_tasks, 2))(
         prof_conv_1_out
     )  # Shape: B x O x T x 2
-    prof_with_cont = kl.Concatenate(axis=3)(
-        [prof_conv_1_out, cont_profs_perm]
-    )  # Shape: B x O x T x 4
 
     # The next steps are done for each task separately, over the concatenated
     # profiles with controls; there are T sets of convolutions
     prof_one_conv_out_arr = []
     for i in range(num_tasks):
-        # A3. A second convolution with a smaller kernel over tasks and controls
+        # A2. A second convolution with a smaller kernel over tasks and controls
         prof_conv_2 = kl.Conv1D(
             filters=4, kernel_size=prof_conv_kernel_size_2,
             padding="same", name=("prof_conv_2_%d" % (i + 1)),
@@ -81,15 +199,20 @@ def expand_model_capacity(
         # Same padding will cause zeros to be padded on the outside, which may
         # be somewhat suboptimal
         task_slicer = kl.Lambda(lambda x: x[:, :, i, :])
-        prof_conv_2_out = prof_conv_2(task_slicer(prof_with_cont))
+        prof_conv_2_out = prof_conv_2(task_slicer(prof_conv_1_out))
         # Shape: B x O x 4
+
+        # A3. Concatenate with proper control track
+        prof_with_cont = kl.Concatenate(axis=2)(
+            [prof_conv_2_out, task_slicer(cont_profs_perm)]
+        )  # Shape: B x O x 6
 
         # A4. Perform length-1 convolutions to get the final profile output
         prof_one_conv = kl.Conv1D(
             filters=2, kernel_size=1, padding="valid",
             name=("prof_one_conv_%d" % (i + 1))
         )
-        prof_one_conv_out = prof_one_conv(prof_conv_2_out)  # Shape: B x O x 2
+        prof_one_conv_out = prof_one_conv(prof_with_cont)  # Shape: B x O x 2
         prof_one_conv_out_arr.append(prof_one_conv_out)
 
     # Recombine the tasks into a single tensor of profile predictions
@@ -109,41 +232,55 @@ def expand_model_capacity(
         padding="valid", name="count_conv_1", activation="relu"
     )
     count_conv_1_out = count_conv_1(dil_conv_crop_out)  # B x O x 2T
-
-    # B2. Concatenate with the control profiles
-    # Reshaping is necessary to ensure the tasks are paired together
+    # Reshape to separate tasks
     count_conv_1_out = kl.Reshape((-1, num_tasks, 2))(
         count_conv_1_out
     )  # Shape: B x O x T x 2
-    count_with_cont = kl.Concatenate(axis=3)(
-        [count_conv_1_out, cont_profs_perm]
-    )  # Shape: B x O x T x 4
 
-    # # The next steps are done for each task separately, over the concatenated
-    # # profiles with controls; there are T sets of convolutions
+    # The next steps are done for each task separately, over the concatenated
+    # profiles with controls; there are T sets of convolutions
     count_dense_out_arr = []
     for i in range(num_tasks):
-        # B3. A second convolution with a smaller kernel over tasks and controls
+        # B2. A second convolution with a smaller kernel over tasks and controls
         count_conv_2 = kl.Conv1D(
             filters=16, kernel_size=count_conv_kernel_size_2,
             padding="valid", name=("count_conv_2_%d" % (i + 1)),
             activation="relu"
         )
         task_slicer = kl.Lambda(lambda x: x[:, :, i, :])
-        count_conv_2_out = count_conv_2(task_slicer(count_with_cont))
+        count_conv_2_out = count_conv_2(task_slicer(count_conv_1_out))
         # Shape: B x Y x 16
 
-        # B4. Weight the convolutional output with a learned spline
+        count_conv_2_out = kl.Conv1D(
+            filters=16, kernel_size=1, padding="valid"
+        )(count_conv_2_out)
+
+        # B3. Weight the convolutional output with a learned spline
         spline_weight = spline.SplineWeight1D(
             num_bases=10, name=("spline_weight_%d" % (i + 1))
         )
         spline_weight_out = spline_weight(count_conv_2_out)
 
-        # B5. Global average pooling
+        # B4. Global average pooling
         pool = kl.GlobalAveragePooling1D()
         pool_out = pool(spline_weight_out)  # Shape: B x 16
 
-        # B6. A final dense layer (no activation) to predict the final counts
+        # B5. Single convolution and pooling on control
+        count_cont_conv = kl.Conv1D(
+            filters=4, kernel_size=count_cont_conv_kernel_size,
+            padding="valid", name=("count_cont_conv_%d" % (i + 1))
+        )
+        count_cont_conv_out = count_cont_conv(task_slicer(cont_profs_perm))
+        # Shape: B x Z x 4
+        cont_pool_out = kl.GlobalAveragePooling1D()(count_cont_conv_out)
+        # Shape: B x 4
+
+        # B6. Concatenate controls
+        count_with_cont = kl.Concatenate(axis=1)(
+            [pool_out, cont_pool_out]
+        )  # Shape: B x 20
+
+        # B7. A final dense layer (no activation) to predict the final counts
         count_dense = kl.Dense(units=2, name=("count_dense_%d" % (i + 1)))
         count_dense_out = count_dense(pool_out)  # Shape: B x 2
         count_dense_out_arr.append(count_dense_out)
@@ -172,18 +309,19 @@ def prepare_model_for_finetune(
     """
     Imports a saved multitask model, and prepares it for task-specific
     fine-tuning. To do this, the model is reconfigured with more capacity in the
-    profile and counts output heads. recompiling the model with task-specific loss functions,
-    reweighting the losses, and freezing the weights of the shared layers.
+    profile and counts output heads. recompiling the model with task-specific
+    loss functions, reweighting the losses, and freezing the weights of the
+    shared layers.
     Arguments:
         `starting_model_path`: path to saved model
         `task_inds`: index of task (or list of indices) to fine-tune for
-        `head`: which output head to train on, either "profile" or "count"
+        `head`: which output head to train on: "profile", "count", or "both"
         `num_tasks`: number of tasks total in model
         `profile_length`: length of profiles
         `learning_rate`: learning rate for loss function
     Returns a model object ready for fine-tuning.
     """
-    assert head in ("profile", "count") 
+    assert head in ("profile", "count", "both") 
    
     profile_loss = train_profile_model.get_profile_loss_function(
         num_tasks, profile_length, task_inds
@@ -193,8 +331,10 @@ def prepare_model_for_finetune(
     )
     if head == "profile":
         loss_weights = [1, 0]
-    else:
+    elif head == "count":
         loss_weights = [0, 1]
+    else:
+        loss_weights = [1, 100]
 
     custom_objects = {
         "kb": kb,
@@ -256,7 +396,7 @@ def run_fine_tune(
 def fine_tune_tasks(
     starting_model_path, num_tasks, files_spec_path, chrom_splits_path,
     fold_num, profile_length, profile_learning_rate, count_learning_rate,
-    num_runs, base_config={}
+    num_runs, task_inds=None, base_config={}
 ):
     """
     Performs model fine-tuning on each task in a pre-trained model. This will
@@ -275,6 +415,8 @@ def fine_tune_tasks(
         `num_runs`: number of runs for each fine-tuning task; only the model
             with the best validation loss over the random initializations is
             kept
+        `task_inds`: list of task indices to do fine-tuning for, one by one;
+            defaults to all tasks
         `base_config`: a configuration dictionary of updates to pass to model
             training experiment (e.g. number of epochs, etc.); this will over-
             ride anything given in the file specs
@@ -307,13 +449,10 @@ def fine_tune_tasks(
     deep_update(train_config, base_config)
 
     last_model_path = starting_model_path
-    for task_ind in range(num_tasks):
+    task_inds = task_inds if task_inds else range(num_tasks)
+    for task_ind in task_inds:
         for head in ("profile", "count"):
-            print(
-                "Fine-tuning task %d/%d, %s head" % \
-                    (task_ind + 1, num_tasks, head), flush=True
-            )
-
+            print("Fine-tuning task %d, %s head" % (task_ind, head), flush=True)
             if head == "profile":
                 learning_rate = profile_learning_rate
             else:
@@ -372,6 +511,10 @@ def fine_tune_tasks(
     help="Number of total tasks in model"
 )
 @click.option(
+    "--task-inds", "-i", nargs=1, default=None, type=str,
+    help="Comma-separated list of task-indices to tune in series; defaults to all tasks"
+)
+@click.option(
     "--num-runs", "-n", nargs=1, default=3, type=int,
     help="Number of random initializations/attempts for each fine-tuning task"
 )
@@ -396,7 +539,7 @@ def fine_tune_tasks(
 )
 def main(
     file_specs_json_path, chrom_split_json_path, chrom_split_key,
-    starting_model_path, num_tasks, num_runs, profile_length,
+    starting_model_path, num_tasks, task_inds, num_runs, profile_length,
     profile_learning_rate, count_learning_rate, config_json_path,
     config_cli_tokens
 ):
@@ -466,11 +609,14 @@ def main(
     proc.start()
     proc.join()
 
+    if task_inds:
+        task_inds = [int(x) for x in task_inds.split(",")]
     print("Beginning fine-tuning")
     fine_tune_tasks(
         new_model_path, num_tasks, file_specs_json_path, chrom_split_json_path,
         chrom_split_key, profile_length, profile_learning_rate,
-        count_learning_rate, num_runs, base_config=base_config
+        count_learning_rate, num_runs, task_inds=task_inds,
+        base_config=base_config
     )
 
 

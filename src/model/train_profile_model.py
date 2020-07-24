@@ -189,10 +189,12 @@ def load_model(model_path, num_tasks, profile_length):
     Imports the model saved at the given path. Imports the loss functions with
     all tasks.
     """ 
+    import model.spline as spline
     custom_objects = {
         "kb": keras.backend,
         "profile_loss": get_profile_loss_function(num_tasks, profile_length),
-        "count_loss": get_count_loss_function(num_tasks)
+        "count_loss": get_count_loss_function(num_tasks),
+        "SplineWeight1D": spline.SplineWeight1D
     }
     return keras.models.load_model(model_path, custom_objects=custom_objects)
 

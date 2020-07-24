@@ -67,3 +67,7 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/processed/`
 			- The model architecture is `ConvNet`, defined [here](https://github.com/smaslova/AI-TAC/blob/master/code/aitac.py)
 		- `keras_sigmoid.*`
 			- The weights and architecture for a Keras model that is the equivalent of the main AI-TAC model, but retrained with a sigmoid final layer to restrict the outputs between 0 and 1
+
+- `mappability/`
+	- BigWig tracks of read mappabilities, using UMAP, for various k-mer lengths
+	- Downloaded from `http://hgdownload.soe.ucsc.edu/gbdb/hg38/hoffmanMappability/k24.Umap.MultiTrackMappability.bw` and `http://hgdownload.soe.ucsc.edu/gbdb/hg38/hoffmanMappability/k100.Umap.MultiTrackMappability.bw`
