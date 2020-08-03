@@ -13,9 +13,25 @@ import multiprocessing
 import click
 import tempfile
 
+def copy_model(
+    starting_model_path, save_model_path, num_tasks=None, profile_length=None
+):
+    """
+    Copies a model from `starting_model_path` to `save_model_path`. The other
+    arguments are for legacy purposes and are ignored.
+    """
+    shutil.copyfile(starting_model_path, save_model_path)
+
+
 def keep_model_capacity(
     starting_model_path, save_model_path, num_tasks, profile_length
 ):
+    """
+    DEPRECATED
+    Constructs a new standard multitask profile model at `save_model_path`,
+    using the same weights for the dilated convolutional layers, but building
+    new layers for the two output heads.
+    """
     starting_model = train_profile_model.load_model(
         starting_model_path, num_tasks, profile_length
     )
@@ -142,6 +158,7 @@ def expand_model_capacity(
     starting_model_path, save_model_path, num_tasks, profile_length
 ):
     """
+    DEPRECATED
     Takes a trained model as defined by `profile_models.py`, and expands the
     capacity in the profile and counts output heads. Saves the new model, which
     has the same base layers, but different output head layers.
@@ -227,15 +244,15 @@ def expand_model_capacity(
 
     # Branch B: read count prediction
     # B1. Perform convolution with a large kernel
-    count_conv_1 = kl.Conv1D(
-        filters=(num_tasks * 2), kernel_size=count_conv_kernel_size_1,
-        padding="valid", name="count_conv_1", activation="relu"
-    )
-    count_conv_1_out = count_conv_1(dil_conv_crop_out)  # B x O x 2T
-    # Reshape to separate tasks
-    count_conv_1_out = kl.Reshape((-1, num_tasks, 2))(
-        count_conv_1_out
-    )  # Shape: B x O x T x 2
+    # count_conv_1 = kl.Conv1D(
+    #     filters=(num_tasks * 2), kernel_size=count_conv_kernel_size_1,
+    #     padding="valid", name="count_conv_1", activation="relu"
+    # )
+    # count_conv_1_out = count_conv_1(dil_conv_crop_out)  # B x O x 2T
+    # # Reshape to separate tasks
+    # count_conv_1_out = kl.Reshape((-1, num_tasks, 2))(
+    #     count_conv_1_out
+    # )  # Shape: B x O x T x 2
 
     # The next steps are done for each task separately, over the concatenated
     # profiles with controls; there are T sets of convolutions
@@ -248,14 +265,14 @@ def expand_model_capacity(
             activation="relu"
         )
         task_slicer = kl.Lambda(lambda x: x[:, :, i, :])
-        count_conv_2_out = count_conv_2(task_slicer(count_conv_1_out))
+        count_conv_2_out = count_conv_2(dil_conv_crop_out)
         # Shape: B x Y x 16
 
+        # B3. Weight the convolutional output with a learned spline
+        # Allow channels to be combined before the spline
         count_conv_2_out = kl.Conv1D(
             filters=16, kernel_size=1, padding="valid"
         )(count_conv_2_out)
-
-        # B3. Weight the convolutional output with a learned spline
         spline_weight = spline.SplineWeight1D(
             num_bases=10, name=("spline_weight_%d" % (i + 1))
         )
@@ -592,17 +609,16 @@ def main(
         del base_config["train"]
         deep_update(base_config, train_dict)
 
-    # Construct a new model with expanded capacity on top of the existing model
+    # Construct a new model
     temp_dir = model_dir if model_dir else tempfile.mkdtemp()
-    new_model_path = os.path.join(temp_dir, "expanded_model.h5")
+    new_model_path = os.path.join(temp_dir, "starting_model.h5")
     print("Constructing new expanded-capacity model at %s" % new_model_path)
     # This needs to be in a new thread, otherwise Keras will have problems with
     # the devices (particularly, a "Failed to get device properties" error)
-    # The issue manifests when the original non-expanded model is imported, and
-    # the new expanded model is imported after that
-
+    # The issue manifests when the original model is imported, and a newly
+    # constructed model is imported after that
     proc = multiprocessing.Process(
-        target=expand_model_capacity, args=(
+        target=keep_model, args=(
             starting_model_path, new_model_path, num_tasks, profile_length
         )
     )
