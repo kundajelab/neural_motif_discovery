@@ -100,7 +100,7 @@ def config(dataset):
     revcomp = dataset["revcomp"]
 
 
-def get_profile_loss_function(num_tasks, profile_length, task_inds=None):
+def get_profile_loss_function(model_num_tasks, profile_length, task_inds=None):
     """
     Returns a _named_ profile loss function. When saving the model, Keras will
     use "profile_loss" as the name for this loss function.
@@ -116,12 +116,13 @@ def get_profile_loss_function(num_tasks, profile_length, task_inds=None):
 
     def profile_loss(true_vals, pred_vals):
         return profile_models.profile_loss(
-            true_vals, pred_vals, num_tasks, profile_length, task_inds=task_inds
+            true_vals, pred_vals, model_num_tasks, profile_length,
+            task_inds=task_inds
         )
     return profile_loss
 
 
-def get_count_loss_function(num_tasks, task_inds=None):
+def get_count_loss_function(model_num_tasks, task_inds=None):
     """
     Returns a _named_ count loss function. When saving the model, Keras will
     use "count_loss" as the name for this loss function.
@@ -137,16 +138,17 @@ def get_count_loss_function(num_tasks, task_inds=None):
 
     def count_loss(true_vals, pred_vals):
         return profile_models.count_loss(
-            true_vals, pred_vals, num_tasks, task_inds=task_inds)
+            true_vals, pred_vals, model_num_tasks, task_inds=task_inds
+        )
     return count_loss
 
 
 @train_ex.capture
 def create_model(
-    input_length, input_depth, profile_length, num_tasks, num_dil_conv_layers,
-    dil_conv_filter_sizes, dil_conv_stride, dil_conv_dilations, dil_conv_depths,
-    prof_conv_kernel_size, prof_conv_stride, counts_loss_weight, learning_rate,
-    task_inds=None
+    input_length, input_depth, profile_length, model_num_tasks,
+    num_dil_conv_layers, dil_conv_filter_sizes, dil_conv_stride,
+    dil_conv_dilations, dil_conv_depths, prof_conv_kernel_size,
+    prof_conv_stride, counts_loss_weight, learning_rate, task_inds=None
 ):
     """
     Creates and compiles profile model using the configuration above.
@@ -155,7 +157,7 @@ def create_model(
         input_length=input_length,
         input_depth=input_depth,
         profile_length=profile_length,
-        num_tasks=num_tasks,
+        num_tasks=model_num_tasks,
         num_dil_conv_layers=num_dil_conv_layers,
         dil_conv_filter_sizes=dil_conv_filter_sizes,
         dil_conv_stride=dil_conv_stride,
@@ -168,8 +170,10 @@ def create_model(
     prof_model.compile(
         keras.optimizers.Adam(lr=learning_rate),
         loss=[
-            get_profile_loss_function(num_tasks, profile_length, task_inds),
-            get_count_loss_function(num_tasks, task_inds),
+            get_profile_loss_function(
+                model_num_tasks, profile_length, task_inds
+            ),
+            get_count_loss_function(model_num_tasks, task_inds),
         ],
         loss_weights=[1, counts_loss_weight]
     )
@@ -184,25 +188,25 @@ def save_model(model, model_path):
 
 
 @train_ex.capture
-def load_model(model_path, num_tasks, profile_length):
+def load_model(model_path, model_num_tasks, profile_length):
     """
     Imports the model saved at the given path. Imports the loss functions with
-    all tasks.
+    all tasks of the model.
     """ 
-    import model.spline as spline
     custom_objects = {
         "kb": keras.backend,
-        "profile_loss": get_profile_loss_function(num_tasks, profile_length),
-        "count_loss": get_count_loss_function(num_tasks),
-        "SplineWeight1D": spline.SplineWeight1D
+        "profile_loss": get_profile_loss_function(
+            model_num_tasks, profile_length
+        ),
+        "count_loss": get_count_loss_function(model_num_tasks)
     }
     return keras.models.load_model(model_path, custom_objects=custom_objects)
 
 
 @train_ex.capture
 def run_epoch(
-    data_gen, num_batches, mode, model, num_tasks, batch_size, revcomp,
-    profile_length, batch_nan_limit, return_data=False
+    data_gen, num_batches, mode, model, model_num_tasks, num_tasks, batch_size,
+    revcomp, profile_length, batch_nan_limit, task_inds=None, return_data=False
 ):
     """
     Runs the data from the data loader once through the model, to train,
@@ -216,6 +220,10 @@ def run_epoch(
         `mode`: one of "train", "eval"; if "train", run the epoch and perform
             backpropagation; if "eval", only do evaluation
         `model`: the current compiled Keras model being trained/evaluated
+        `model_num_tasks`: number of tasks in the model architecture (may be
+            different from number of tasks associated with the dataset)
+        `task_inds`: if specified, train only on these specific tasks; is used
+            only if `model_num_tasks` is not the same as `num_tasks`
         `return_data`: if specified, returns the following as NumPy arrays:
             true profile counts, predicted profile log probabilities,
             true total counts, predicted log counts
@@ -223,6 +231,8 @@ def run_epoch(
     more things will be returned after these.
     """
     assert mode in ("train", "eval")
+    if task_inds and model_num_tasks != num_tasks:
+        assert len(task_inds) == model_num_tasks
 
     t_iter = tqdm.trange(num_batches, desc="\tLoss: ---")
     batch_losses = []
@@ -231,8 +241,8 @@ def run_epoch(
         num_samples_exp = num_batches * batch_size
         num_samples_exp *= 2 if revcomp else 1
         # Real number of samples can be smaller because of partial last batch
-        profile_shape = (num_samples_exp, num_tasks, profile_length, 2)
-        count_shape = (num_samples_exp, num_tasks, 2)
+        profile_shape = (num_samples_exp, model_num_tasks, profile_length, 2)
+        count_shape = (num_samples_exp, model_num_tasks, 2)
         all_log_pred_profs = np.empty(profile_shape)
         all_log_pred_counts = np.empty(count_shape)
         all_true_profs = np.empty(profile_shape)
@@ -248,6 +258,12 @@ def run_epoch(
 
         tf_profs = profiles[:, :num_tasks, :, :]
         cont_profs = profiles[:, num_tasks:, :, :]
+
+        # If the model architecture has fewer tasks, limit the input here
+        if task_inds and model_num_tasks != num_tasks:
+            tf_profs = tf_profs[:, task_inds]
+            cont_profs = cont_profs[:, task_inds]
+
         tf_counts = np.sum(tf_profs, axis=2)
 
         if mode == "train":
@@ -305,8 +321,9 @@ def run_epoch(
 @train_ex.capture
 def train_model(
     train_enq, val_enq, test_summit_enq, test_peak_enq, test_genome_enq,
-    num_workers, num_epochs, early_stopping, early_stop_hist_len,
-    early_stop_min_delta, train_seed, _run, task_inds=None, starting_model=None
+    num_workers, num_epochs, num_tasks, early_stopping, early_stop_hist_len,
+    early_stop_min_delta, train_seed, _run, task_inds=None,
+    limit_model_tasks=False, starting_model=None
 ):
     """
     Trains the network for the given training and validation data.
@@ -328,6 +345,10 @@ def train_model(
             each batch giving the 1-hot encoded sequence, profiles, and statuses
         `task_inds`: a single index or a list of 0-indexed indices denoting
             which tasks to train on; defaults to all tasks
+        `limit_model_tasks`: if True, and `task_inds` is specified, reduce the
+            model architecture to be only for those tasks indices; otherwise,
+            the model will have outputs for all tasks associated with the TF
+            by default
         `starting_model`: a compiled Keras model of the correct size/dimensions
             to train on; if specified, this model will be used instead of
             creating a new one
@@ -341,8 +362,18 @@ def train_model(
     if train_seed:
         tf.set_random_seed(train_seed)
 
+    if task_inds and limit_model_tasks:
+        model_num_tasks = len(task_inds)
+    else:
+        model_num_tasks = num_tasks
+
     if starting_model is None:
-        model = create_model(task_inds=task_inds)
+        model = create_model(
+            model_num_tasks=model_num_tasks,
+            task_inds=(task_inds if not limit_model_tasks else None)
+            # If we're limiting the model's tasks already, then don't specify
+            # specific task indices at this step
+        )
     else:
         model = starting_model
 
@@ -360,7 +391,10 @@ def train_model(
         train_gen, val_gen= train_enq.get(), val_enq.get()
         val_gen = val_enq.get()
 
-        t_batch_losses = run_epoch(train_gen, train_num_batches, "train", model)
+        t_batch_losses = run_epoch(
+            train_gen, train_num_batches, "train", model, model_num_tasks,
+            task_inds=task_inds
+        )
         t_epoch_loss = util.nan_mean(t_batch_losses)
         print(
             "Train epoch %d: %6.10f average loss" % (
@@ -374,7 +408,10 @@ def train_model(
         if np.isnan(t_epoch_loss):
             break
 
-        v_batch_losses = run_epoch(val_gen, val_num_batches, "eval", model)
+        v_batch_losses = run_epoch(
+            val_gen, val_num_batches, "eval", model, model_num_tasks,
+            task_inds=task_inds
+        )
         v_epoch_loss = util.nan_mean(v_batch_losses)
         all_val_epoch_losses.append(v_epoch_loss)
         print(
@@ -436,7 +473,8 @@ def train_model(
         data_num_batches = len(data_enq.sequence)
         _, log_pred_profs, log_pred_counts, true_profs, true_counts = \
             run_epoch(
-                data_gen, data_num_batches, "eval", model, return_data=True
+                data_gen, data_num_batches, "eval", model, model_num_tasks,
+                task_inds=task_inds, return_data=True
         )
 
         metrics = profile_performance.compute_performance_metrics(
@@ -454,7 +492,7 @@ def train_model(
 @train_ex.command
 def run_training(
     peak_beds, profile_hdf5, train_chroms, val_chroms, test_chroms,
-    task_inds=None, starting_model=None
+    task_inds=None, limit_model_tasks=False, starting_model=None
 ):
     """
     Trains the network given the dataset in the form of peak BEDs and a profile
@@ -469,6 +507,10 @@ def run_training(
         `test_chroms`: list of chromosomes for test set
         `task_inds`: a single index or a list of 0-indexed indices denoting
             which tasks to train on; defaults to all tasks
+        `limit_model_tasks`: if True, and `task_inds` is specified, reduce the
+            model architecture to be only for those tasks indices; otherwise,
+            the model will have outputs for all tasks associated with the TF
+            by default
         `starting_model`: a compiled Keras model of the correct size/dimensions
             to train on; if specified, this model will be used instead of
             creating a new one (the size/dimensions must be consistent with
@@ -481,6 +523,7 @@ def run_training(
         if type(task_inds) is int:
             peak_beds = [peak_beds[task_inds]]
         else:
+            task_inds = list(task_inds)
             peak_beds = [peak_beds[i] for i in task_inds]
 
     train_dataset = make_profile_dataset.create_data_loader(
@@ -510,7 +553,8 @@ def run_training(
     ]
     return train_model(
         train_enq, val_enq, test_summit_enq, test_peak_enq, test_genome_enq,
-        task_inds=task_inds, starting_model=starting_model
+        task_inds=task_inds, limit_model_tasks=limit_model_tasks,
+        starting_model=starting_model
     )
 
 

@@ -75,12 +75,21 @@ def run_train_command(config_updates):
     "--config-json-path", "-c", nargs=1, default=None,
     help="Path to a config JSON file for Sacred, may override hyperparameters"
 )
+@click.option(
+    "--task-inds", "-i", nargs=1, default=None,
+    help="Comma-delimited list of task indices to train for; defaults to all tasks"
+)
+@click.option(
+    "--limit-model-tasks", "-l", is_flag=True,
+    help="If specified, limit the model architecture to the specified task indices"
+)
 @click.argument(
     "config_cli_tokens", nargs=-1
 )
 def main(
     file_specs_json_path, chrom_split_json_path, chrom_split_key, num_runs,
-    hyperparam_json_path, config_json_path, config_cli_tokens
+    hyperparam_json_path, config_json_path, config_cli_tokens, task_inds,
+    limit_model_tasks
 ):
     """
     Launches hyperparameter tuning for a given number of runs. Below is a description of the parameters.
@@ -126,6 +135,11 @@ def main(
     base_config["train_chroms"] = split["train"]
     base_config["val_chroms"] = split["val"]
     base_config["test_chroms"] = split["test"]
+
+    # If specified, limit the training tasks/architecture
+    base_config["task_inds"] = \
+        [int(x) for x in task_inds.split(",")] if task_inds else None
+    base_config["limit_model_tasks"] = limit_model_tasks
 
     # Read in the hyperparameter specs dictionary
     if hyperparam_json_path:

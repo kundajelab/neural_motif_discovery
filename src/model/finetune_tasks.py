@@ -12,6 +12,7 @@ import copy
 import multiprocessing
 import click
 import tempfile
+import shutil
 
 def copy_model(
     starting_model_path, save_model_path, num_tasks=None, profile_length=None
@@ -618,7 +619,7 @@ def main(
     # The issue manifests when the original model is imported, and a newly
     # constructed model is imported after that
     proc = multiprocessing.Process(
-        target=keep_model, args=(
+        target=copy_model, args=(
             starting_model_path, new_model_path, num_tasks, profile_length
         )
     )
