@@ -1,4 +1,5 @@
 import model.train_profile_model as train_profile_model
+import model.train_count_regression_model as train_count_regression_model
 import numpy as np
 import random
 import os
@@ -45,13 +46,24 @@ def deep_update(parent, update):
             parent[key] = val
 
 
-def run_train_command(config_updates):
-    train_profile_model.train_ex.run(
-        "run_training", config_updates=config_updates
-    )
+def run_train_command(config_updates, model_type):
+    if model_type == "countreg":
+        train_count_regression_model.train_ex.run(
+            "run_training", config_updates=config_updates
+        )
+    else:
+        train_profile_model.train_ex.run(
+            "run_training", config_updates=config_updates
+        )
 
 
 @click.command()
+@click.option(
+    "--model-type", "-t",
+    type=click.Choice(["profile", "countreg"], case_sensitive=False),
+    default="profile",
+    help="Whether to train a profile model or count regression model"
+)
 @click.option(
     "--file-specs-json-path", "-f", nargs=1, required=True,
     help="Path to file containing paths for training data"
@@ -87,9 +99,9 @@ def run_train_command(config_updates):
     "config_cli_tokens", nargs=-1
 )
 def main(
-    file_specs_json_path, chrom_split_json_path, chrom_split_key, num_runs,
-    hyperparam_json_path, config_json_path, config_cli_tokens, task_inds,
-    limit_model_tasks
+    model_type, file_specs_json_path, chrom_split_json_path, chrom_split_key,
+    num_runs, hyperparam_json_path, config_json_path, config_cli_tokens,
+    task_inds, limit_model_tasks
 ):
     """
     Launches hyperparameter tuning for a given number of runs. Below is a description of the parameters.
@@ -202,7 +214,7 @@ def main(
         deep_update(config_updates, train_dict)
 
         proc = multiprocessing.Process(
-            target=run_train_command, args=(config_updates,)
+            target=run_train_command, args=(config_updates, model_type)
         )
         proc.start()
         proc.join()  # Wait until the training process stops
