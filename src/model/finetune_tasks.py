@@ -613,11 +613,12 @@ def main(
     # Construct a new model
     temp_dir = model_dir if model_dir else tempfile.mkdtemp()
     new_model_path = os.path.join(temp_dir, "starting_model.h5")
-    print("Constructing new expanded-capacity model at %s" % new_model_path)
-    # This needs to be in a new thread, otherwise Keras will have problems with
-    # the devices (particularly, a "Failed to get device properties" error)
-    # The issue manifests when the original model is imported, and a newly
-    # constructed model is imported after that
+    # print("Constructing new expanded-capacity model at %s" % new_model_path)
+    # If we are to construct a brand new model, it needs to be in a new thread,
+    # otherwise Keras will have problems with the devices (particularly, a
+    # "Failed to get device properties" error). The issue manifests when the
+    # original model is imported, and a newly constructed model is imported
+    # after that
     proc = multiprocessing.Process(
         target=copy_model, args=(
             starting_model_path, new_model_path, num_tasks, profile_length

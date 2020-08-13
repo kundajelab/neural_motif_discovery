@@ -10,3 +10,10 @@ install-interpet:
 	cd ~/lib && git clone https://github.com/kundajelab/deeplift.git && cd deeplift && pip install -e .
 	cd ~/lib && git clone https://github.com/kundajelab/tfmodisco.git && cd tfmodisco && pip install -e .
 	pip install psutil
+
+install-svm:
+	mkdir -p ~/lib
+	cd ~/lib && git clone git@github.com:kundajelab/lsgkm.git
+	cd lsgkm/src
+	make
+	make install
