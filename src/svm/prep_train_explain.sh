@@ -81,9 +81,10 @@ do
 	make_para $explainthreads
 	# Assume each Fasta record is exactly 2 lines
 	((maxlinespershard=explainseqspershard*2))
-	tempdir=/tmp/svmexplain_$$
-	mkdir -p /tmp/svmexplain_$$
-	split $svmlabeldir/$stem/inputs.test.$foldnum.positives $tempdir/testseqs. -l $maxlinespershard
+	tempdir=/tmp/svmexplain_$stem\_$$
+	mkdir -p $tempdir
+
+	cat $svmlabeldir/$stem/inputs.test.$foldnum.positives $svmlabeldir/$stem/inputs.train.$foldnum.positives | split - $tempdir/testseqs. -l $maxlinespershard
 
 	for seqshard in `ls $tempdir/testseqs.*`
 	do
@@ -93,5 +94,5 @@ do
 	wait  # Wait for the remainder of the processes to finish
 
 	mkdir -p $expldir/$stem
-	cat $tempdir/*.out > $expldir/$stem/explanations.test.$foldnum.positives
+	cat $tempdir/*.out > $expldir/$stem/explanations.all.$foldnum.positives
 done
