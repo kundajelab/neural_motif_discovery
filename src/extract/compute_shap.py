@@ -19,13 +19,9 @@ def create_background(model_inputs, bg_size=10, seed=20191206):
     the originals.
     """
     input_seq, cont_profs = model_inputs
-    input_seq_bg = np.empty((bg_size,) + input_seq.shape)
-    cont_prof_bg = np.empty((bg_size,) + cont_profs.shape)
     rng = np.random.RandomState(seed)
-    for i in range(bg_size):
-        input_seq_shuf = dinuc_shuffle(input_seq, rng=rng)
-        input_seq_bg[i] = input_seq_shuf
-        cont_prof_bg[i] = cont_profs
+    input_seq_bg = dinuc_shuffle(input_seq, bg_size, rng=rng)
+    cont_prof_bg = np.tile(cont_profs, (bg_size, 1, 1, 1))
     return [input_seq_bg, cont_prof_bg]
 
 
@@ -204,7 +200,6 @@ if __name__ == "__main__":
         prof_scores.append(prof_explainer(input_seqs, cont_profs))
         all_input_seqs.append(input_seqs)
         all_coords.append(coords)
-        break
  
     enq.stop()
 
