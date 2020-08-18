@@ -119,7 +119,7 @@ def create_explainer(model, task_index=None):
     probs = tf.nn.softmax(logits_stopgrad, axis=2)
 
     logits_weighted = logits * probs  # Shape: B x T x O x 2
-    if task_index:
+    if task_index is not None:
         logits_weighted = logits_weighted[:, task_index : task_index + 1]
     prof_sum = tf.reduce_sum(logits_weighted, axis=(1, 2, 3))
     explainer = shap.DeepExplainer(

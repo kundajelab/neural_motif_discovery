@@ -176,7 +176,7 @@ def load_model(model_path, model_num_tasks):
     all tasks of the model.
     """ 
     custom_objects = {
-        "count_regression_loss": get_count_loss_function(model_num_tasks)
+        "count_loss": get_count_loss_function(model_num_tasks)
     }
     return keras.models.load_model(model_path, custom_objects=custom_objects)
 
