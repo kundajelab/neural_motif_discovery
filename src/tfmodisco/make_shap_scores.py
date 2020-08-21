@@ -108,11 +108,11 @@ def main(
     # Make explainer
     if model_type == "profile":
         explainer = compute_profile_shap.create_explainer(
-            model, task_index=task_index
+            model, task_index=(task_index if model_num_tasks > 1 else None)
         )
     else:
         explainer = compute_countreg_shap.create_explainer(
-            model, task_index=task_index
+            model, task_index=(task_index if model_num_tasks > 1 else None)
         )
 
     # Create the datasets in the HDF5
@@ -159,6 +159,7 @@ def main(
             hyp_scores_dset[start:end] = explainer(input_seqs, cont_profs)
         else: 
             hyp_scores_dset[start:end] = explainer(input_seqs)
+
         input_seqs_dset[start:end] = input_seqs
         coords_chrom_dset[start:end] = coords[:, 0].astype("S")
         coords_start_dset[start:end] = coords[:, 1].astype(int)
