@@ -88,7 +88,7 @@ do
 
 	for seqshard in `ls $tempdir/testseqs.*`
 	do
-		run_with_para /users/amtseng/lib/lsgkm/bin/gkmexplain $seqshard $modeldir/$stem/$foldnum.model.txt $seqshard.out
+		run_with_para /users/amtseng/lib/lsgkm/bin/gkmexplain -m 1 $seqshard $modeldir/$stem/$foldnum.model.txt $seqshard.out
 	done
 
 	wait  # Wait for the remainder of the processes to finish
