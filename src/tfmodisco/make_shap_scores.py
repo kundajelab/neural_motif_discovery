@@ -48,15 +48,15 @@ import h5py
     help="Number of tasks in model architecture, if different from number of TF tasks; if so, need to specify the set of task indices to limit to"
 )
 @click.option(
-    "--task-index", "-i", default=None, type=int,
-    help="(0-based) Index of the task(s) to compute importance scores for; by default aggregates over all tasks"
+    "--task-inds", "-i", default=None, type=str,
+    help="Comma-delimited set of indices (0-based) of the task(s) to compute importance scores for; by default aggregates over all tasks"
 )
 @click.option(
     "--outfile", "-o", required=True, help="Where to store the hdf5 with scores"
 )
 def main(
     model_type, model_path, files_spec_path, reference_fasta, chrom_sizes,
-    input_length, profile_length, num_tasks, model_num_tasks, task_index,
+    input_length, profile_length, num_tasks, model_num_tasks, task_inds,
     outfile
 ):
     """
@@ -69,13 +69,13 @@ def main(
     with open(files_spec_path, "r") as f:
         files_spec = json.load(f)
     peak_beds = files_spec["peak_beds"]
-    if task_index is not None:
-        peak_beds = [peak_beds[task_index]]
+    if task_inds is not None:
+        task_inds = [int(i) for i in task_inds.split(",")]
+        peak_beds = [peak_beds[i] for i in task_inds]
     profile_hdf5 = files_spec["profile_hdf5"]
 
     if model_num_tasks and model_num_tasks != num_tasks:
-        assert task_index is not None and model_num_tasks == 1, \
-            "Only supporting all- and single-task models right now"
+        assert task_inds is not None and model_num_tasks == len(task_inds)
     else:
         model_num_tasks = num_tasks
 
@@ -95,8 +95,7 @@ def main(
 
     # Get set of positive coordinates
     all_pos_coords = data_loading.get_positive_inputs(
-        files_spec_path, chrom_set=chrom_set,
-        task_indices=(None if task_index is None else [task_index])
+        files_spec_path, chrom_set=chrom_set, task_indices=task_inds
     )
     num_coords = len(all_pos_coords)
 
@@ -108,11 +107,13 @@ def main(
     # Make explainer
     if model_type == "profile":
         explainer = compute_profile_shap.create_explainer(
-            model, task_index=(task_index if model_num_tasks > 1 else None)
+            model,
+            task_inds=(task_inds if model_num_tasks == num_tasks else None)
         )
     else:
         explainer = compute_countreg_shap.create_explainer(
-            model, task_index=(task_index if model_num_tasks > 1 else None)
+            model,
+            task_inds=(task_inds if model_num_tasks == num_tasks else None)
         )
 
     # Create the datasets in the HDF5
@@ -148,7 +149,7 @@ def main(
 
         # If the model architecture has fewer tasks, limit the input here
         if model_num_tasks and model_num_tasks != num_tasks:
-            cont_profs = cont_profs[:, task_index:task_index + 1]
+            cont_profs = cont_profs[:, task_inds]
 
         # Expand/cut coordinates to right input length
         midpoints = (coords[:, 1] + coords[:, 2]) // 2

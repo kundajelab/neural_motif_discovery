@@ -77,14 +77,14 @@ def combine_mult_and_diffref(mult, orig_inp, bg_data):
     return [np.mean(input_seq_hyp_scores_eachdiff, axis=0)]
     
 
-def create_explainer(model, task_index=None):
+def create_explainer(model, task_inds=None):
     """
     Given a trained Keras model, creates a Shap DeepExplainer that returns
     hypothetical scores for the input sequence.
     Arguments:
         `model`: a model from 
             `count_regression_models.count_regression_predictor`
-        `task_index`: a specific task index (0-indexed) to perform explanations
+        `task_inds`: a list of task indices (0-indexed) to perform explanations
             from (i.e. explanations will only be from the specified outputs); by
             default explains all tasks
     Returns a function that takes in input sequences, and outputs hypothetical
@@ -92,8 +92,10 @@ def create_explainer(model, task_index=None):
     """
     output = model.output  # Shape: B x T x 2 (count predictions)
     
-    if task_index is not None:
-        output = output[:, task_index : task_index + 1]
+    if task_inds is not None:
+        assert type(task_inds) in (list, np.ndarray)
+        output = tf.stack([output[:, i] for i in task_inds], axis=1)
+
     output_sum = tf.reduce_sum(output, axis=(1, 2))
     explainer = shap.DeepExplainer(
         model=(model.input, output_sum),

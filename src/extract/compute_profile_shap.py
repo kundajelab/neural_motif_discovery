@@ -89,13 +89,13 @@ def combine_mult_and_diffref(mult, orig_inp, bg_data):
     return [input_seq_hyp_scores, cont_profs_hyp_scores]
     
 
-def create_explainer(model, task_index=None):
+def create_explainer(model, task_inds=None):
     """
     Given a trained Keras model, creates a Shap DeepExplainer that returns
     hypothetical scores for the input sequence.
     Arguments:
         `model`: a model from `profile_model.profile_tf_binding_predictor`
-        `task_index`: a specific task index (0-indexed) to perform explanations
+        `task_inds`: a list of task indices (0-indexed) to perform explanations
             from (i.e. explanations will only be from the specified outputs); by
             default explains all tasks
     Returns a function that takes in input sequences and control profiles, and
@@ -119,8 +119,11 @@ def create_explainer(model, task_index=None):
     probs = tf.nn.softmax(logits_stopgrad, axis=2)
 
     logits_weighted = logits * probs  # Shape: B x T x O x 2
-    if task_index is not None:
-        logits_weighted = logits_weighted[:, task_index : task_index + 1]
+    if task_inds is not None:
+        assert type(task_inds) in (list, np.ndarray)
+        logits_weighted = tf.stack(
+            [logits_weighted[:, i] for i in task_inds], axis=1
+        )
     prof_sum = tf.reduce_sum(logits_weighted, axis=(1, 2, 3))
     explainer = shap.DeepExplainer(
         model=(model.input, prof_sum),
@@ -189,7 +192,7 @@ if __name__ == "__main__":
     para_batch_gen = enq.get()
 
     # Make explainers
-    prof_explainer = create_explainer(model)
+    prof_explainer = create_explainer(model, task_inds=[0, 1])
 
     # Compute importance scores
     prof_scores = []
