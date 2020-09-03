@@ -163,7 +163,7 @@ def profile_jsd(
         true_prof_swap = np.swapaxes(true_prof_probs_batch, 2, 3)
         pred_prof_swap = np.swapaxes(pred_prof_probs_batch, 2, 3)
 
-        # Smooth the profiles
+        # Smooth the true profiles
         if prof_smooth_kernel_width == 0:
             sigma, truncate = 1, 0
         else:
@@ -172,11 +172,8 @@ def profile_jsd(
         true_prof_smooth = scipy.ndimage.gaussian_filter1d(
             true_prof_swap, sigma, axis=-1, truncate=truncate
         )
-        pred_prof_smooth = scipy.ndimage.gaussian_filter1d(
-            pred_prof_swap, sigma, axis=-1, truncate=truncate
-        )
 
-        jsd_batch = jensen_shannon_distance(true_prof_smooth, pred_prof_smooth)
+        jsd_batch = jensen_shannon_distance(true_prof_smooth, pred_prof_swap)
         jsd_batch_mean = np.mean(jsd_batch, axis=-1)  # Average over strands
         jsds[start:end] = jsd_batch_mean
     return jsds
@@ -293,9 +290,9 @@ def profile_corr_mse(
             RAW PROBABILITIES for each task and strand
         `batch_size`: performs computation in a batch size of this many samples
     Returns 3 N x T arrays, containing the Pearson correlation, Spearman
-    correlation, and mean squared error of the profile predictions (as log
-    counts). Correlations/MSE are computed for each sample/task (strands are
-    pooled together).
+    correlation, and mean squared error of the profile predictions (as
+    probabilities). Correlations/MSE are computed for each sample/task (strands
+    are pooled together).
     """
     num_samples, num_tasks = true_prof_probs.shape[:2]
     pears = np.zeros((num_samples, num_tasks))
@@ -313,18 +310,15 @@ def profile_corr_mse(
         true_batch = true_prof_probs[start:end]  # Shapes: B x T x O x 2
         pred_batch = pred_prof_probs[start:end]
 
-        # Smooth along the output profile length
+        # Smooth along the output profile length (true profile only)
         true_smooth = scipy.ndimage.gaussian_filter1d(
             true_batch, sigma, axis=2, truncate=truncate
-        )
-        pred_smooth = scipy.ndimage.gaussian_filter1d(
-            pred_batch, sigma, axis=2, truncate=truncate
         )
 
         # Flatten by pooling strands
         new_shape = (true_batch.shape[0], num_tasks, -1)
         true_flat = np.reshape(true_smooth, new_shape)
-        pred_flat = np.reshape(pred_smooth, new_shape)
+        pred_flat = np.reshape(pred_batch, new_shape)
 
         pears[start:end] = pearson_corr(true_flat, pred_flat)
         spear[start:end] = spearman_corr(true_flat, pred_flat)
