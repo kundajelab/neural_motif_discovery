@@ -19,8 +19,9 @@ def import_shap_scores(shap_scores_hdf5, center_cut_size=None, chrom_set=None):
             SHAP scores
         `chrom_set`: list of chromosomes to restrict to; if None, use all
             chromosomes available in the SHAP scores
-    Returns the hypothetical importance scores, actual importance scores, and
-    corresponding one-hot encoded input sequences. Each is an N x L x 4 array,
+    Returns the hypothetical importance scores, actual importance scores,
+    corresponding one-hot encoded input sequences, and coordinates. The first
+    three are N x L x 4 arrays, and the last is an N x 3 object array.
     where L is the cut size (or default size).
     """
     score_reader = h5py.File(shap_scores_hdf5, "r")
@@ -40,7 +41,7 @@ def import_shap_scores(shap_scores_hdf5, center_cut_size=None, chrom_set=None):
     hyp_scores = np.empty((num_seqs, center_cut_size, 4))
     act_scores = np.empty((num_seqs, center_cut_size, 4))
     one_hot_seqs = np.empty((num_seqs, center_cut_size, 4))
-    chroms = np.empty(num_seqs, dtype=object)
+    coords = np.empty((num_seqs, 3), dtype=object)
 
     for i in tqdm.trange(num_batches, desc="Importing SHAP scores"):
         batch_slice = slice(i * batch_size, (i + 1) * batch_size)
@@ -51,20 +52,28 @@ def import_shap_scores(shap_scores_hdf5, center_cut_size=None, chrom_set=None):
             batch_slice, cut_start:cut_end
         ]
         chrom_batch = score_reader["coords_chrom"][batch_slice].astype(str)
+        start_batch = score_reader["coords_start"][batch_slice]
+        end_batch = score_reader["coords_end"][batch_slice]
         hyp_scores[batch_slice] = hyp_score_batch
         one_hot_seqs[batch_slice] = one_hot_seq_batch
         act_scores[batch_slice] = hyp_score_batch * one_hot_seq_batch
-        chroms[batch_slice] = chrom_batch
+        coords[batch_slice, 0] = chrom_batch
+        coords[batch_slice, 1] = start_batch
+        coords[batch_slice, 2] = end_batch
 
     score_reader.close()
 
     if chrom_set:
-        mask = np.isin(chroms, chrom_set)
+        mask = np.isin(coords[:, 0], chrom_set)
         hyp_scores = hyp_scores[mask]
         act_scores = act_scores[mask]
         one_hot_seqs = one_hot_seqs[mask]
+        coords = coords[mask]
 
-    return hyp_scores, act_scores, one_hot_seqs
+    # Remove any examples in which the input sequence is not all ACGT
+    mask = np.sum(one_hot_seqs, axis=(1, 2)) == center_cut_size
+
+    return hyp_scores[mask], act_scores[mask], one_hot_seqs[mask], coords[mask]
 
 
 @click.command()
@@ -99,7 +108,7 @@ def main(
     """
     if chrom_set:
         chrom_set = chrom_set.split(",")
-    hyp_scores, act_scores, input_seqs = import_shap_scores(
+    hyp_scores, act_scores, input_seqs, _ = import_shap_scores(
         shap_scores_hdf5, center_cut_size, chrom_set
     )
     task_to_hyp_scores, task_to_act_scores = OrderedDict(), OrderedDict()
