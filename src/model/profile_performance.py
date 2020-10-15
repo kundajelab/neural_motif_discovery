@@ -128,7 +128,6 @@ def jensen_shannon_distance(probs1, probs2):
     return 0.5 * (_kl_divergence(probs1, mid) + _kl_divergence(probs2, mid))
 
 
-@performance_ex.capture
 def profile_jsd(
     true_prof_probs, pred_prof_probs, prof_smooth_kernel_sigma,
     prof_smooth_kernel_width, batch_size=200
@@ -275,7 +274,6 @@ def mean_squared_error(arr1, arr2):
     return np.mean(np.square(arr1 - arr2), axis=-1)
 
 
-@performance_ex.capture
 def profile_corr_mse(
     true_prof_probs, pred_prof_probs, prof_smooth_kernel_sigma,
     prof_smooth_kernel_width, batch_size=200
@@ -358,7 +356,8 @@ def count_corr_mse(log_true_total_counts, log_pred_total_counts):
 
 @performance_ex.capture
 def compute_performance_metrics(
-    true_profs, log_pred_profs, true_counts, log_pred_counts, print_updates=True
+    true_profs, log_pred_profs, true_counts, log_pred_counts,
+    prof_smooth_kernel_sigma, prof_smooth_kernel_width, print_updates=True
 ):
     """
     Computes some evaluation metrics on a set of positive examples, given the
@@ -411,7 +410,10 @@ def compute_performance_metrics(
         print("\t\tComputing profile JSD... ", end="", flush=True)
         start = datetime.now()
     pred_prof_probs = np.exp(log_pred_profs)
-    jsd = profile_jsd(true_profs, pred_prof_probs)
+    jsd = profile_jsd(
+        true_profs, pred_prof_probs, prof_smooth_kernel_sigma,
+        prof_smooth_kernel_width
+    )
     if print_updates:
         end = datetime.now()
         print("%ds" % (end - start).seconds)
@@ -426,7 +428,8 @@ def compute_performance_metrics(
         where=(true_prof_sum != 0)
     )
     prof_pears, prof_spear, prof_mse = profile_corr_mse(
-        true_prof_probs, pred_prof_probs
+        true_prof_probs, pred_prof_probs, prof_smooth_kernel_sigma,
+        prof_smooth_kernel_width
     )
     if print_updates:
         end = datetime.now()
