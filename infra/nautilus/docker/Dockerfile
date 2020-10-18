@@ -31,7 +31,7 @@ COPY train_requirements.txt /scratch
 RUN pip install -r train_requirements.txt
 
 # Install DeepSHAP
-RUN git clone https://github.com/atseng95/shap.git
+RUN git clone https://github.com/amtseng/shap.git
 RUN pip install -e shap
 
 # Create /users/amtseng directory
