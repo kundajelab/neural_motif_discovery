@@ -162,7 +162,8 @@ def profile_tf_binding_predictor(
         ) for i in range(num_tasks)
     ]
     prof_slicer_arr = [
-        kl.Lambda(lambda x: x[:, :, i, :]) for i in range(num_tasks)
+        kl.Lambda(lambda x, i: x[:, :, i, :], arguments={"i": i})
+        for i in range(num_tasks)
     ]
     prof_one_conv_out_arr = []
     for i in range(num_tasks):
@@ -206,7 +207,8 @@ def profile_tf_binding_predictor(
         for i in range(num_tasks)
     ]
     count_slicer_arr = [
-        kl.Lambda(lambda x: x[:, i, :]) for i in range(num_tasks)
+        kl.Lambda(lambda x, i: x[:, i, :], arguments={"i": i})
+        for i in range(num_tasks)
     ]
     count_out_dense_arr = []
     for i in range(num_tasks):
