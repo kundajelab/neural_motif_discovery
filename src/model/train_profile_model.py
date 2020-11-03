@@ -30,7 +30,7 @@ train_ex.logger = logger
 @train_ex.config
 def config(dataset):
     # Number of dilating convolutional layers to apply
-    num_dil_conv_layers = 7
+    num_dil_conv_layers = 9
     
     # Size of dilating convolutional filters to apply
     dil_conv_filter_sizes = [21] + ([3] * (num_dil_conv_layers - 1))
