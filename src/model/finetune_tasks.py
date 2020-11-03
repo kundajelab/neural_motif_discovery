@@ -1,5 +1,4 @@
 import model.train_profile_model as train_profile_model
-import model.spline as spline
 import tensorflow as tf
 import keras.optimizers
 import keras.layers as kl
@@ -8,6 +7,7 @@ import keras.backend as kb
 import numpy as np
 import os
 import json
+import re
 import copy
 import multiprocessing
 import click
@@ -321,7 +321,7 @@ def expand_model_capacity(
 
 
 def prepare_model_for_finetune(
-    starting_model_path, task_inds, head, num_tasks, profile_length,
+    starting_model_path, task_inds, head, model_num_tasks, profile_length,
     learning_rate
 ):
     """
@@ -334,18 +334,18 @@ def prepare_model_for_finetune(
         `starting_model_path`: path to saved model
         `task_inds`: index of task (or list of indices) to fine-tune for
         `head`: which output head to train on: "profile", "count", or "both"
-        `num_tasks`: number of tasks total in model
+        `model_num_tasks`: number of tasks total in model
         `profile_length`: length of profiles
         `learning_rate`: learning rate for loss function
     Returns a model object ready for fine-tuning.
     """
-    assert head in ("profile", "count", "both") 
-   
+    assert head in ("profile", "count", "both")
+
     profile_loss = train_profile_model.get_profile_loss_function(
-        num_tasks, profile_length, task_inds
+        model_num_tasks, profile_length, task_inds
     )
     count_loss = train_profile_model.get_count_loss_function(
-        num_tasks, task_inds
+        model_num_tasks, task_inds
     )
     if head == "profile":
         loss_weights = [1, 0]
@@ -357,15 +357,16 @@ def prepare_model_for_finetune(
     custom_objects = {
         "kb": kb,
         "profile_loss": profile_loss,
-        "count_loss": count_loss,
-        "SplineWeight1D": spline.SplineWeight1D
+        "count_loss": count_loss
     }
     # Import model
     model = km.load_model(starting_model_path, custom_objects=custom_objects)
 
     # Freeze shared layers
-    for i in range(7):
-        model.get_layer("dil_conv_%d" % (i + 1)).trainable = False
+    pattern = re.compile(r"dil_conv_\d+")
+    for layer in model.layers:
+        if pattern.match(layer.name):
+            layer.trainable = False
     
     # Recompile with frozen layers and new task-specific loss functions
     model.compile(
@@ -392,17 +393,17 @@ def deep_update(parent, update):
 
 
 def run_fine_tune(
-    starting_model_path, task_ind, head, num_tasks, profile_length,
-    learning_rate, config_update, queue
+    starting_model_path, task_ind, model_task_ind, head, num_tasks,
+    model_num_tasks, profile_length, learning_rate, config_update, queue
 ):
     starting_model = prepare_model_for_finetune(
-        starting_model_path, task_ind, head, num_tasks, profile_length,
-        learning_rate
+        starting_model_path, model_task_ind, head, model_num_tasks,
+        profile_length, learning_rate
     )
 
     updates = copy.deepcopy(config_update)
     updates["starting_model"] = starting_model
-    updates["task_inds"] = task_ind
+    updates["task_inds"] = [task_ind]
 
     run_result = train_profile_model.train_ex.run(
         "run_training", config_updates=updates
@@ -414,7 +415,7 @@ def run_fine_tune(
 def fine_tune_tasks(
     starting_model_path, num_tasks, files_spec_path, chrom_splits_path,
     fold_num, profile_length, profile_learning_rate, count_learning_rate,
-    num_runs, task_inds=None, base_config={}
+    num_runs, task_inds=None, model_num_tasks=None, base_config={}
 ):
     """
     Performs model fine-tuning on each task in a pre-trained model. This will
@@ -435,6 +436,7 @@ def fine_tune_tasks(
             kept
         `task_inds`: list of task indices to do fine-tuning for, one by one;
             defaults to all tasks
+        `model_num_tasks`: number of tasks in the model itself
         `base_config`: a configuration dictionary of updates to pass to model
             training experiment (e.g. number of epochs, etc.); this will over-
             ride anything given in the file specs
@@ -467,8 +469,16 @@ def fine_tune_tasks(
     deep_update(train_config, base_config)
 
     last_model_path = starting_model_path
-    task_inds = task_inds if task_inds else range(num_tasks)
-    for task_ind in task_inds:
+
+    # Match up task index of dataset with task index of model
+    if not model_num_tasks:
+        task_inds = task_inds if task_inds else range(num_tasks)
+        model_task_inds = task_inds
+    else:
+        assert len(task_inds) == model_num_tasks
+        model_task_inds = range(model_num_tasks)
+
+    for task_ind, model_task_ind in zip(task_inds, model_task_inds):
         for head in ("profile", "count"):
             print("Fine-tuning task %d, %s head" % (task_ind, head), flush=True)
             if head == "profile":
@@ -482,8 +492,9 @@ def fine_tune_tasks(
                 queue = multiprocessing.Queue()
                 proc = multiprocessing.Process(
                     target=run_fine_tune, args=(
-                        last_model_path, task_ind, head, num_tasks,
-                        profile_length, learning_rate, train_config, queue
+                        last_model_path, task_ind, model_task_ind, head,
+                        num_tasks, model_num_tasks, profile_length,
+                        learning_rate, train_config, queue
                     )
                 )
                 proc.start()
@@ -526,18 +537,22 @@ def fine_tune_tasks(
 )
 @click.option(
     "--num-tasks", "-t", nargs=1, required=True, type=int,
-    help="Number of total tasks in model"
+    help="Number of total tasks in dataset"
 )
 @click.option(
     "--task-inds", "-i", nargs=1, default=None, type=str,
     help="Comma-separated list of task-indices to tune in series; defaults to all tasks"
 )
 @click.option(
+    "--limit-model-tasks", "-l", is_flag=True,
+    help="If specified, the model architecture is limited to the specified task indices"
+)
+@click.option(
     "--num-runs", "-n", nargs=1, default=3, type=int,
     help="Number of random initializations/attempts for each fine-tuning task"
 )
 @click.option(
-    "--profile-length", "-l", nargs=1, default=1000,
+    "--profile-length", "-pl", nargs=1, default=1000,
     help="Length of output profiles; used to compute read density"
 )
 @click.option(
@@ -557,9 +572,9 @@ def fine_tune_tasks(
 )
 def main(
     file_specs_json_path, chrom_split_json_path, chrom_split_key,
-    starting_model_path, num_tasks, task_inds, num_runs, profile_length,
-    profile_learning_rate, count_learning_rate, config_json_path,
-    config_cli_tokens
+    starting_model_path, num_tasks, task_inds, limit_model_tasks, num_runs,
+    profile_length, profile_learning_rate, count_learning_rate,
+    config_json_path, config_cli_tokens
 ):
     """
     Fine-tunes a pre-trained model on each prediction task. When fine-tuning,
@@ -610,6 +625,15 @@ def main(
         del base_config["train"]
         deep_update(base_config, train_dict)
 
+    if task_inds:
+        task_inds = [int(x) for x in task_inds.split(",")]
+    base_config["limit_model_tasks"] = limit_model_tasks
+
+    if limit_model_tasks:
+        model_num_tasks = len(task_inds)
+    else:
+        model_num_tasks = num_tasks
+
     # Construct a new model
     temp_dir = model_dir if model_dir else tempfile.mkdtemp()
     new_model_path = os.path.join(temp_dir, "starting_model.h5")
@@ -627,14 +651,12 @@ def main(
     proc.start()
     proc.join()
 
-    if task_inds:
-        task_inds = [int(x) for x in task_inds.split(",")]
     print("Beginning fine-tuning")
     fine_tune_tasks(
         new_model_path, num_tasks, file_specs_json_path, chrom_split_json_path,
         chrom_split_key, profile_length, profile_learning_rate,
         count_learning_rate, num_runs, task_inds=task_inds,
-        base_config=base_config
+        model_num_tasks=model_num_tasks, base_config=base_config
     )
 
 
