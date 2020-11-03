@@ -128,19 +128,37 @@ def get_singletask_stats(sacred_dir, num_tasks):
         count_spear, val_loss
 
 
+def get_multitask_stats(sacred_dir):
+    best_run, best_epoch, best_val_loss = None, None, None
+
+    for run_num in os.listdir(sacred_dir):
+        try:
+            run_num = int(run_num)
+        except ValueError:
+            continue
+
+        metrics = import_metrics(sacred_dir, run_num)
+
+        val_losses = metrics["val_epoch_loss"]["values"]
+        epoch = np.argmin(val_losses)
+        loss = val_losses[epoch]
+        if best_run is None or loss < best_val_loss:
+            best_run, best_epoch, best_val_loss = run_num, epoch, loss
+
+    return best_run, best_epoch, best_val_loss
+
+
 @click.command()
 @click.option(
     "--model-type", "-m", required=True,
-    type=click.Choice(["finetune", "singletask"], case_sensitive=False),
+    type=click.Choice(["multitask", "finetune", "singletask"], case_sensitive=False),
     help="Type of model runs"
 )
 @click.option(
     "--sacred-path", "-s", required=True,
     help="Path to Sacred directory, containing runs, or single tasks with runs"
 )
-@click.option(
-    "--num-tasks", "-t", required=True, type=int, help="Number of tasks"
-)
+@click.option("--num-tasks", "-t", type=int, help="Number of tasks")
 @click.option(
     "--num-runs", "-r", default=3,
     help="For finetuned models, the number of runs for each task/output head"
@@ -150,6 +168,15 @@ def main(model_type, sacred_path, num_tasks, num_runs):
     Gathers validation and test metrics from a set of Sacred runs, and reports
     the best run/epoch and metrics for each task.
     """
+    if model_type == "multitask":
+        best_run, best_epoch, best_val_loss = get_multitask_stats(sacred_path)
+        print("run_num\tepoch_num\tval_loss")
+        print("%d\t%d\t%.3f" % (best_run, best_epoch + 1, best_val_loss))
+        return
+
+    if not num_tasks:
+        raise ValueError("Number of tasks must be provided with --num-tasks/-t")
+
     if model_type == "finetune":
         run_nums, epoch_nums, prof_nll, count_mse, count_pears, count_spear, \
             val_loss = get_finetune_stats(sacred_path, num_tasks, num_runs)
