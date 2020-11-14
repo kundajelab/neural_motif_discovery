@@ -10,6 +10,13 @@ def import_metrics(sacred_dir, run_num):
     return metrics
 
 
+def import_config(sacred_dir, run_num):
+    json_path = os.path.join(sacred_dir, str(run_num), "config.json")
+    with open(json_path, "r") as f:
+        metrics = json.load(f)
+    return metrics
+
+
 def print_stats(
     run_nums, epoch_nums, prof_nll, count_mse, count_pears, count_spear,
     val_loss
@@ -148,10 +155,35 @@ def get_multitask_stats(sacred_dir):
     return best_run, best_epoch, best_val_loss
 
 
+def get_hyperparam_stats(sacred_dir):
+    best_run, best_epoch, best_val_loss = None, None, None
+    best_counts_loss_weight, best_learning_rate = None, None
+
+    for run_num in os.listdir(sacred_dir):
+        try:
+            run_num = int(run_num)
+        except ValueError:
+            continue
+
+        metrics = import_metrics(sacred_dir, run_num)
+
+        val_losses = metrics["val_epoch_loss"]["values"]
+        epoch = np.argmin(val_losses)
+        loss = val_losses[epoch]
+        if best_run is None or loss < best_val_loss:
+            best_run, best_epoch, best_val_loss = run_num, epoch, loss
+            config = import_config(sacred_dir, run_num)
+            best_counts_loss_weight = config["counts_loss_weight"]
+            best_learning_rate = config["learning_rate"]
+
+    return best_run, best_epoch, best_val_loss, best_counts_loss_weight, \
+        best_learning_rate
+
+
 @click.command()
 @click.option(
     "--model-type", "-m", required=True,
-    type=click.Choice(["multitask", "finetune", "singletask"], case_sensitive=False),
+    type=click.Choice(["hyperparam", "multitask", "finetune", "singletask"], case_sensitive=False),
     help="Type of model runs"
 )
 @click.option(
@@ -172,6 +204,16 @@ def main(model_type, sacred_path, num_tasks, num_runs):
         best_run, best_epoch, best_val_loss = get_multitask_stats(sacred_path)
         print("run_num\tepoch_num\tval_loss")
         print("%d\t%d\t%.3f" % (best_run, best_epoch + 1, best_val_loss))
+        return
+    
+    if model_type == "hyperparam":
+        best_run, best_epoch, best_val_loss, best_counts_loss_weight, \
+            best_learning_rate = get_hyperparam_stats(sacred_path)
+        print("run_num\tepoch_num\tval_loss\tcounts_loss_weight\tlearning_rate")
+        print("%d\t%d\t%.3f\t%.3f\t%.6f" % (
+            best_run, best_epoch + 1, best_val_loss, best_counts_loss_weight,
+            best_learning_rate
+        ))
         return
 
     if not num_tasks:

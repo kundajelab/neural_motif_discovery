@@ -1,26 +1,29 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: test-sleep
+  name: test-gpu
 spec:
   template:
     spec:
       containers:
-      - name: test-sleep
+      - name: test-gpu
         image: kundajelab/genome-keras-sacred:gcp
         imagePullPolicy: Always
         resources:
           requests:
-            memory: 10Gi
-            cpu: 1
+            cpu: 7
+            memory: 25Gi
+            nvidia.com/gpu: 1
           limits:
-            memory: 16Gi
-            cpu: 3
+            cpu: 7
+            memory: 25Gi
+            nvidia.com/gpu: 1
         command:
         - /bin/bash
         - -c
         args:
-        - echo "Beginning test-sleep";
-          sleep 10000;
+        - echo "Beginning test-gpu";
+          gsutil cp gs://gbsc-gcp-lab-kundaje-user-amtseng/test/test_gpu.sh ~;
+          bash ~/test_gpu.sh;
       restartPolicy: Never
   backoffLimit: 0
