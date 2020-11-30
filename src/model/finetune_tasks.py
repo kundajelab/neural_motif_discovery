@@ -475,7 +475,10 @@ def fine_tune_tasks(
         task_inds = task_inds if task_inds else range(num_tasks)
         model_task_inds = task_inds
     else:
-        assert len(task_inds) == model_num_tasks
+        if task_inds:
+            assert len(task_inds) == model_num_tasks
+        else:
+            task_inds = range(num_tasks)
         model_task_inds = range(model_num_tasks)
 
     for task_ind, model_task_ind in zip(task_inds, model_task_inds):
@@ -556,7 +559,7 @@ def fine_tune_tasks(
     help="Length of output profiles; used to compute read density"
 )
 @click.option(
-    "--profile-learning-rate", "-plr", nargs=1, default=0.004,
+    "--profile-learning-rate", "-plr", nargs=1, default=0.001,
     help="Learning rate for task-specific fine-tuning of the profile head"
 )
 @click.option(

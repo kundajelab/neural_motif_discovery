@@ -98,7 +98,7 @@ def get_singletask_stats(sacred_dir, num_tasks):
         val_loss = [], [], [], [], [], [], []
 
     for i in range(num_tasks):
-        task_dir = os.path.join(sacred_dir, "task%d" % i)
+        task_dir = os.path.join(sacred_dir, "task_%d" % i)
 
         best_run, best_epoch, best_val_loss = None, None, None
 
