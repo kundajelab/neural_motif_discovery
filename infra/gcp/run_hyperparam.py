@@ -77,8 +77,8 @@ def copy_data(
 @click.command()
 @click.option(
     "--model-type", "-t",
-    type=click.Choice(["binary", "profile"], case_sensitive=False),
-    required=True, help="Whether to train a binary model or profile model"
+    type=click.Choice(["countreg", "profile"], case_sensitive=False),
+    required=True, help="Whether to train a count regression model or profile model"
 )
 @click.option(
     "--file-specs-json-path", "-f", nargs=1, required=True,

@@ -1,4 +1,7 @@
 import os
+import sacred
+# Note: sometimes (particularly on the cloud) it is necessary to import Sacred
+# before Tensorflow, otherwise some import errors can occur
 import model.profile_models as profile_models
 import model.train_profile_model as train_profile_model
 import model.profile_performance as profile_performance
@@ -247,7 +250,7 @@ def predict_peaks(
     help="Path to chromosome sizes"
 )
 @click.option(
-    "--input-length", "-il", default=1346, type=int,
+    "--input-length", "-il", default=2114, type=int,
     help="Length of input sequences to model"
 )
 @click.option(
