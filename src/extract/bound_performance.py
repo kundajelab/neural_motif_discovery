@@ -169,7 +169,8 @@ def compute_performance_bounds(
     lower_perf_prof_dict = profile_performance.compute_performance_metrics(
         true_profs, profs_to_log_prob_profs(true_profs_shuf_profile),
         np.sum(true_profs, axis=2),
-        np.log(np.sum(true_profs_shuf_profile, axis=2) + 1)
+        np.log(np.sum(true_profs_shuf_profile, axis=2) + 1),
+        smooth_pred_profs=True
     )
     # Remove non-profile metrics
     for key in list(lower_perf_prof_dict.keys()):
@@ -194,7 +195,8 @@ def compute_performance_bounds(
     print("Computing upper bound performance...")
     upper_perf_dict = profile_performance.compute_performance_metrics(
         rep1_profs, profs_to_log_prob_profs(rep2_profs),
-        np.sum(rep1_profs, axis=2), np.log(np.sum(rep2_profs, axis=2) + 1)
+        np.sum(rep1_profs, axis=2), np.log(np.sum(rep2_profs, axis=2) + 1),
+        smooth_pred_profs=True
     )
     
     # Compute normalized NLL
@@ -251,8 +253,8 @@ def run(
 
 @bound_perf_ex.automain
 def main():
-    files_spec_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/SPI1/SPI1_training_paths.json"
-    replicate_prof_hdf5 = "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/SPI1/SPI1_pseudorep.h5"
-    out_hdf5_path = "/users/amtseng/tfmodisco/results/performance_bounds/SPI1/SPI1_performance_bounds.h5"
+    files_spec_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/E2F6/E2F6_training_paths.json"
+    replicate_prof_hdf5 = "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/E2F6/E2F6_pseudorep_profiles.h5"
+    out_hdf5_path = "/users/amtseng/tfmodisco/results/performance_bounds/E2F6/E2F6_performance_bounds.h5"
 
     run(files_spec_path, replicate_prof_hdf5, out_hdf5_path)

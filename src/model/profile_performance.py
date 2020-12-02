@@ -45,7 +45,8 @@ def multinomial_log_probs(category_log_probs, trials, query_counts):
 
 
 def profile_multinomial_nll(
-    true_profs, log_pred_profs, true_counts, batch_size=200
+    true_profs, log_pred_profs, true_counts, prof_smooth_kernel_sigma,
+    prof_smooth_kernel_width, smooth_pred_profs=False, batch_size=200
 ):
     """
     Computes the negative log likelihood of seeing the true profile, given the
@@ -61,6 +62,8 @@ def profile_multinomial_nll(
             profiles for each task and strand, as LOG probabilities
         `true_counts`: a N x T x 2 array, containing the true total counts
             for each task and strand
+        `smooth_pred_profs`: whether or not to smooth the predicted profiles
+            before computing JSD
         `batch_size`: performs computation in a batch size of this many samples
     Returns an N x T array, containing the strand-pooled multinomial NLL for
     each sample and task.
@@ -78,6 +81,23 @@ def profile_multinomial_nll(
         # Swap axes on profiles to make them B x T x 2 x O
         true_profs_batch = np.swapaxes(true_profs_batch, 2, 3)
         log_pred_profs_batch = np.swapaxes(log_pred_profs_batch, 2, 3)
+
+        # Smooth the predicted profile in probability space (by default this
+        # doesn't happen)
+        if prof_smooth_kernel_width == 0:
+            sigma, truncate = 1, 0
+        else:
+            sigma = prof_smooth_kernel_sigma
+            truncate = (prof_smooth_kernel_width - 1) / (2 * sigma)
+        if smooth_pred_profs:
+            # Transform to probability space
+            pred_profs_batch = np.exp(log_pred_profs_batch)
+            # Smooth
+            pred_profs_batch_smooth = scipy.ndimage.gaussian_filter1d(
+                pred_profs_batch, sigma, axis=-1, truncate=truncate
+            )
+            # Transform back to log-probability space
+            log_pred_profs_batch = np.log(pred_profs_batch_smooth)
 
         nll_batch = -multinomial_log_probs(
             log_pred_profs_batch, true_counts_batch, true_profs_batch
@@ -130,7 +150,8 @@ def jensen_shannon_distance(probs1, probs2):
 
 def profile_jsd(
     true_prof_probs, pred_prof_probs, prof_smooth_kernel_sigma,
-    prof_smooth_kernel_width, batch_size=200
+    prof_smooth_kernel_width, smooth_true_profs=True, smooth_pred_profs=False,
+    batch_size=200
 ):
     """
     Computes the Jensen-Shannon divergence of the true and predicted profiles
@@ -145,6 +166,10 @@ def profile_jsd(
         `pred_prof_probs`: N x T x O x 2 array, containing the predicted
             profiles for each task and strand, as RAW PROBABILITIES or RAW
             COUNTS
+        `smooth_true_profs`: whether or not to smooth the true profiles before
+            computing JSD
+        `smooth_pred_profs`: whether or not to smooth the predicted profiles
+            before computing JSD
         `batch_size`: performs computation in a batch size of this many samples
     Returns an N x T array, where the JSD is computed across the profiles and
     averaged between the strands, for each sample/task.
@@ -162,17 +187,22 @@ def profile_jsd(
         true_prof_swap = np.swapaxes(true_prof_probs_batch, 2, 3)
         pred_prof_swap = np.swapaxes(pred_prof_probs_batch, 2, 3)
 
-        # Smooth the true profiles
+        # Smooth the profiles (by default, only smooth true profile)
         if prof_smooth_kernel_width == 0:
             sigma, truncate = 1, 0
         else:
             sigma = prof_smooth_kernel_sigma
             truncate = (prof_smooth_kernel_width - 1) / (2 * sigma)
-        true_prof_smooth = scipy.ndimage.gaussian_filter1d(
-            true_prof_swap, sigma, axis=-1, truncate=truncate
-        )
+        if smooth_true_profs:
+            true_prof_swap = scipy.ndimage.gaussian_filter1d(
+                true_prof_swap, sigma, axis=-1, truncate=truncate
+            )
+        if smooth_pred_profs:
+            pred_prof_swap = scipy.ndimage.gaussian_filter1d(
+                pred_prof_swap, sigma, axis=-1, truncate=truncate
+            )
 
-        jsd_batch = jensen_shannon_distance(true_prof_smooth, pred_prof_swap)
+        jsd_batch = jensen_shannon_distance(true_prof_swap, pred_prof_swap)
         jsd_batch_mean = np.mean(jsd_batch, axis=-1)  # Average over strands
         jsds[start:end] = jsd_batch_mean
     return jsds
@@ -357,7 +387,8 @@ def count_corr_mse(log_true_total_counts, log_pred_total_counts):
 @performance_ex.capture
 def compute_performance_metrics(
     true_profs, log_pred_profs, true_counts, log_pred_counts,
-    prof_smooth_kernel_sigma, prof_smooth_kernel_width, print_updates=True
+    prof_smooth_kernel_sigma, prof_smooth_kernel_width, smooth_true_profs=True,
+    smooth_pred_profs=False, print_updates=True
 ):
     """
     Computes some evaluation metrics on a set of positive examples, given the
@@ -373,6 +404,11 @@ def compute_performance_metrics(
             for each task and strand
         `log_pred_counts`: a N x T x 2 array, containing the predicted LOG total
             counts for each task and strand
+        `smooth_true_profs`: if True, smooth the true profiles before computing
+            JSD; true profiles will not be smoothed for any other metric
+        `smooth_pred_profs`: if True, smooth the predicted profiles before
+            computing JSD and NLL; predicted profiles will not be smoothed for
+            any other metric
         `print_updates`: if True, print out updates and runtimes
     Returns a dictionary with the following:
         A N x T-array of the average negative log likelihoods for the profiles
@@ -398,7 +434,8 @@ def compute_performance_metrics(
         print("\t\tComputing profile NLL... ", end="", flush=True)
         start = datetime.now()
     nll = profile_multinomial_nll(
-        true_profs, log_pred_profs, true_counts
+        true_profs, log_pred_profs, true_counts, prof_smooth_kernel_sigma,
+        prof_smooth_kernel_width, smooth_pred_profs=smooth_pred_profs
     )
     if print_updates:
         end = datetime.now()
@@ -412,7 +449,8 @@ def compute_performance_metrics(
     pred_prof_probs = np.exp(log_pred_profs)
     jsd = profile_jsd(
         true_profs, pred_prof_probs, prof_smooth_kernel_sigma,
-        prof_smooth_kernel_width
+        prof_smooth_kernel_width, smooth_true_profs=smooth_true_profs,
+        smooth_pred_profs=smooth_pred_profs
     )
     if print_updates:
         end = datetime.now()
