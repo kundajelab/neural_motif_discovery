@@ -4,7 +4,7 @@ import math
 import tqdm
 import os
 import model.util as util
-import model.count_regression_models as count_regression_models
+import model.countreg_models as countreg_models
 import model.profile_performance as profile_performance
 import feature.make_profile_dataset as make_profile_dataset
 import keras.optimizers
@@ -66,9 +66,6 @@ def config(dataset):
     # Dense layer dropout rate; only needed if `dropout` is True
     dense_drop_rate = 0.2
 
-    # Number of prediction tasks (2 outputs for each task: plus/minus strand)
-    num_tasks = 4
-
     # Number of training epochs
     num_epochs = 10
 
@@ -121,7 +118,7 @@ def get_count_loss_function(model_num_tasks, task_inds=None):
         task_inds = tf.convert_to_tensor(inds)
 
     def count_loss(true_vals, pred_vals):
-        return count_regression_models.count_regression_loss(
+        return countreg_models.count_regression_loss(
             true_vals, pred_vals, model_num_tasks, task_inds=task_inds
         )
     return count_loss
@@ -137,7 +134,7 @@ def create_model(
     """
     Creates and compiles profile model using the configuration above.
     """
-    model = count_regression_models.count_regression_predictor(
+    model = countreg_models.count_regression_predictor(
         input_length=input_length,
         input_depth=input_depth,
         num_tasks=model_num_tasks,
@@ -183,8 +180,8 @@ def load_model(model_path, model_num_tasks):
 
 @train_ex.capture
 def run_epoch(
-    data_gen, num_batches, mode, model, model_num_tasks, num_tasks, batch_size,
-    revcomp, batch_nan_limit, task_inds=None, return_data=False
+    data_gen, num_batches, mode, model, model_num_tasks, data_num_tasks,
+    batch_size, revcomp, batch_nan_limit, task_inds=None, return_data=False
 ):
     """
     Runs the data from the data loader once through the model, to train,
@@ -200,15 +197,17 @@ def run_epoch(
         `model`: the current compiled Keras model being trained/evaluated
         `model_num_tasks`: number of tasks in the model architecture (may be
             different from number of tasks associated with the dataset)
+        `data_num_tasks`: number of tasks in the dataset (may be different
+            different from number of tasks in the model architecture)
         `task_inds`: if specified, train only on these specific tasks; is used
-            only if `model_num_tasks` is not the same as `num_tasks`
+            only if `model_num_tasks` is not the same as `data_num_tasks`
         `return_data`: if specified, returns the following as NumPy arrays:
             predicted log counts, true total counts
     Returns a list of losses for the batches. If `return_data` is True, then
     more things will be returned after these.
     """
     assert mode in ("train", "eval")
-    if task_inds and model_num_tasks != num_tasks:
+    if task_inds and model_num_tasks != data_num_tasks:
         assert len(task_inds) == model_num_tasks
 
     t_iter = tqdm.trange(num_batches, desc="\tLoss: ---")
@@ -226,14 +225,14 @@ def run_epoch(
     for _ in t_iter:
         input_seqs, profiles, statuses = next(data_gen)
         profile_shape = profiles.shape[1:]
-        assert (profile_shape[0], profile_shape[2]) == (2 * num_tasks, 2), \
-            "Expected profiles of shape (N, %d, {profile length}, 2); is num_tasks set correctly?" % (2 * num_tasks)
+        assert (profile_shape[0], profile_shape[2]) == (2 * data_num_tasks, 2), \
+            "Expected profiles of shape (N, %d, {profile length}, 2); is num_tasks set correctly?" % (2 * data_num_tasks)
 
-        tf_profs = profiles[:, :num_tasks, :, :]
+        tf_profs = profiles[:, :data_num_tasks, :, :]
         # Ignore control profiles, as they are not needed for this architecture
 
         # If the model architecture has fewer tasks, limit the input here
-        if task_inds and model_num_tasks != num_tasks:
+        if task_inds and model_num_tasks != data_num_tasks:
             tf_profs = tf_profs[:, task_inds]
 
         tf_counts = np.sum(tf_profs, axis=2)
@@ -276,8 +275,8 @@ def run_epoch(
 @train_ex.capture
 def train_model(
     train_enq, val_enq, test_summit_enq, test_peak_enq, test_genome_enq,
-    num_workers, num_epochs, num_tasks, early_stopping, early_stop_hist_len,
-    early_stop_min_delta, train_seed, _run, task_inds=None,
+    data_num_tasks, num_workers, num_epochs, early_stopping,
+    early_stop_hist_len, early_stop_min_delta, train_seed, _run, task_inds=None,
     limit_model_tasks=False, starting_model=None
 ):
     """
@@ -298,6 +297,8 @@ def train_model(
         `test_genome_enq` (OrderedEnqueuer's generator): a data loader for the
             test data, with summit-centered coordinates with sampled negatives,
             each batch giving the 1-hot encoded sequence, profiles, and statuses
+        `data_num_tasks`: number of tasks in the dataset (may be different
+            different from number of tasks in the model architecture)
         `task_inds`: a single index or a list of 0-indexed indices denoting
             which tasks to train on; defaults to all tasks
         `limit_model_tasks`: if True, and `task_inds` is specified, reduce the
@@ -320,7 +321,7 @@ def train_model(
     if task_inds and limit_model_tasks:
         model_num_tasks = len(task_inds)
     else:
-        model_num_tasks = num_tasks
+        model_num_tasks = data_num_tasks
 
     if starting_model is None:
         model = create_model(
@@ -348,7 +349,7 @@ def train_model(
 
         t_batch_losses = run_epoch(
             train_gen, train_num_batches, "train", model, model_num_tasks,
-            task_inds=task_inds
+            data_num_tasks, task_inds=task_inds
         )
         t_epoch_loss = util.nan_mean(t_batch_losses)
         print(
@@ -365,7 +366,7 @@ def train_model(
 
         v_batch_losses = run_epoch(
             val_gen, val_num_batches, "eval", model, model_num_tasks,
-            task_inds=task_inds
+            data_num_tasks, task_inds=task_inds
         )
         v_epoch_loss = util.nan_mean(v_batch_losses)
         all_val_epoch_losses.append(v_epoch_loss)
@@ -394,17 +395,18 @@ def train_model(
 
         # Check for early stopping
         if early_stopping:
-            if len(val_epoch_loss_hist) < early_stop_hist_len - 1:
+            if len(val_epoch_loss_hist) < early_stop_hist_len + 1:
                 # Not enough history yet; tack on the loss
                 val_epoch_loss_hist = [v_epoch_loss] + val_epoch_loss_hist
             else:
                 # Tack on the new validation loss, kicking off the old one
                 val_epoch_loss_hist = \
                     [v_epoch_loss] + val_epoch_loss_hist[:-1]
+            if len(val_epoch_loss_hist) == early_stop_hist_len + 1:
+                # There is sufficient history to check for improvement
                 best_delta = np.max(np.diff(val_epoch_loss_hist))
                 if best_delta < early_stop_min_delta:
                     break  # Not improving enough
-
 
     if all_val_epoch_losses:
         best_epoch = np.argmin(all_val_epoch_losses) + 1  # 1-indexed best epoch
@@ -428,7 +430,7 @@ def train_model(
         data_num_batches = len(data_enq.sequence)
         _, log_pred_counts, true_counts = run_epoch(
             data_gen, data_num_batches, "eval", model, model_num_tasks,
-            task_inds=task_inds, return_data=True
+            data_num_tasks, task_inds=task_inds, return_data=True
         )
 
         # Compute performance metrics
@@ -467,8 +469,8 @@ def train_model(
 
 @train_ex.command
 def run_training(
-    peak_beds, profile_hdf5, train_chroms, val_chroms, test_chroms,
-    task_inds=None, limit_model_tasks=False, starting_model=None
+    peak_beds, profile_hdf5, data_num_tasks, train_chroms, val_chroms,
+    test_chroms, task_inds=None, limit_model_tasks=False, starting_model=None
 ):
     """
     Trains the network given the dataset in the form of peak BEDs and a profile
@@ -478,6 +480,7 @@ def run_training(
             peaks to train on, to be passed to data loader creation
         `profile_hdf5`: path to HDF5 containing training and control profiles,
             to be passed to data loader creation
+        `data_num_tasks`: number of tasks in the dataset
         `train_chroms`: list of chromosomes for training set
         `val_chroms`: list of chromosomes for validation set
         `test_chroms`: list of chromosomes for test set
@@ -490,7 +493,7 @@ def run_training(
         `starting_model`: a compiled Keras model of the correct size/dimensions
             to train on; if specified, this model will be used instead of
             creating a new one (the size/dimensions must be consistent with
-            `num_tasks` and `task_inds`
+            `model_num_tasks` and `task_inds`
     Returns the following items in this order: run ID/number, output directory,
     1-indexed epoch of best validation loss, the value of the best validation
     loss, and the path to the model of the best validation loss.
@@ -529,8 +532,8 @@ def run_training(
     ]
     return train_model(
         train_enq, val_enq, test_summit_enq, test_peak_enq, test_genome_enq,
-        task_inds=task_inds, limit_model_tasks=limit_model_tasks,
-        starting_model=starting_model
+        data_num_tasks, task_inds=task_inds,
+        limit_model_tasks=limit_model_tasks, starting_model=starting_model
     )
 
 
@@ -540,6 +543,9 @@ def main():
     paths_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/SPI1/SPI1_training_paths.json"
     with open(paths_json_path, "r") as f:
         paths_json = json.load(f)
+    config_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/SPI1/SPI1_config.json"
+    with open(config_json_path, "r") as f:
+        config_json = json.load(f)
 
     splits_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/chrom_splits.json"
     with open(splits_json_path, "r") as f:
@@ -547,6 +553,7 @@ def main():
 
     peak_beds = paths_json["peak_beds"]
     profile_hdf5 = paths_json["profile_hdf5"]
+    data_num_tasks = config_json["train"]["data_num_tasks"]
 
     train_chroms, val_chroms, test_chroms = \
         splits_json["1"]["train"], splits_json["1"]["val"], \
@@ -554,7 +561,8 @@ def main():
 
     run_num, output_dir, best_epoch, best_val_loss, best_model_path = \
         run_training(
-            peak_beds, profile_hdf5, train_chroms, val_chroms, test_chroms
+            peak_beds, profile_hdf5, data_num_tasks, train_chroms, val_chroms,
+            test_chroms
         )
     print("Run number: %s" % run_num)
     print("Output directory: %s" % output_dir)

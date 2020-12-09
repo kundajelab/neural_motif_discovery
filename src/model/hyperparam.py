@@ -1,5 +1,5 @@
 import model.train_profile_model as train_profile_model
-import model.train_count_regression_model as train_count_regression_model
+import model.train_countreg_model as train_countreg_model
 import numpy as np
 import random
 import os
@@ -48,7 +48,7 @@ def deep_update(parent, update):
 
 def run_train_command(config_updates, model_type):
     if model_type == "countreg":
-        train_count_regression_model.train_ex.run(
+        train_countreg_model.train_ex.run(
             "run_training", config_updates=config_updates
         )
     else:

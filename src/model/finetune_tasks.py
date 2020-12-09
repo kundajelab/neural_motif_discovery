@@ -423,7 +423,7 @@ def fine_tune_tasks(
     specific.
     Arguments:
         `starting_model_path`: path to saved model to start from
-        `num_tasks`: total number of tasks in model
+        `num_tasks`: total number of tasks in dataset
         `files_spec_path`: path to JSON that defines paths to peak BEDs and
             profile HDF5
         `chrom_splits_path`: path to JSON that defines chromosome splits
@@ -461,7 +461,7 @@ def fine_tune_tasks(
         "train_chroms": chrom_splits[str(fold_num)]["train"],
         "val_chroms": chrom_splits[str(fold_num)]["val"],
         "test_chroms": chrom_splits[str(fold_num)]["test"],
-        "num_tasks": num_tasks
+        "data_num_tasks": num_tasks
     }
 
     assert "starting_model" not in base_config
