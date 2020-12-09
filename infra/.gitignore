@@ -1,3 +1,7 @@
-jobs
+specs
+nautilus/jobs
+
+get_failed_jobs.sh
+launch_all_jobs.sh
 
 .nfs*

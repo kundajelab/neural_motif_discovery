@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: run-training-{tflower}-task{task}-fold{foldnum}
+spec:
+  completions: 3
+  parallelism: 3
+  template:
+    spec:
+      containers:
+      - name: run-training-{tflower}-task{task}-fold{foldnum}
+        image: kundajelab/genome-keras-sacred:gcp
+        imagePullPolicy: Always
+        resources:
+          requests:
+            cpu: 7
+            memory: 45Gi
+            nvidia.com/gpu: 1
+          limits:
+            cpu: 7
+            memory: 45Gi
+            nvidia.com/gpu: 1
+        command:
+        - /bin/bash
+        - -c
+        args:
+        - gsutil cp gs://gbsc-gcp-lab-kundaje-user-amtseng/run_hyperparam.py ~;
+          cd ~;
+          MODEL_DIR={modeldir} python run_hyperparam.py -t profile -f /users/amtseng/tfmodisco/data/processed/ENCODE/config/{tf}/{tf}_training_paths.json -c /users/amtseng/tfmodisco/data/processed/ENCODE/config/{tf}/{tf}_hypertune_task{task}.json -s /users/amtseng/tfmodisco/data/processed/ENCODE/chrom_splits.json -k {foldnum} -n 1 {taskarg};
+      restartPolicy: Never
+  backoffLimit: 0

@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {name}
+spec:
+  template:
+    spec:
+      containers:
+      - name: {name}
+        image: kundajelab/lsgkm:latest
+        imagePullPolicy: Always
+        resources:
+          requests:
+            memory: 100Gi
+            cpu: 25
+          limits:
+            memory: 110Gi
+            cpu: 30
+        command:
+        - /bin/bash
+        - -c
+        args:
+        - gsutil cp gs://gbsc-gcp-lab-kundaje-user-amtseng/run_gkmexplain.sh ~;
+          cd ~;
+          bash run_gkmexplain.sh {tf_name} {task_name} {fold_num}
+      restartPolicy: OnFailure
+  backoffLimit: 3

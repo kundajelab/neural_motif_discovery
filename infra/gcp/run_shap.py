@@ -32,7 +32,7 @@ def copy_item(path, directory=False):
 
 def copy_data(model_path, file_specs_json_path):
     """
-    Given the paths to various files needed for running predictions, this
+    Given the paths to various files needed for running DeepSHAP, this
     function copies the paths from the bucket and into the corresponding
     location on the running pod. Note that all these paths must be absolute
     paths starting with `/users/amtseng/`, and they will be copied to this
@@ -78,7 +78,7 @@ def copy_data(model_path, file_specs_json_path):
     help="Path to file containing paths for training data"
 )
 @click.option(
-    "--num-tasks", "-n", required=True, help="Number of tasks associated to TF",
+    "--data-num-tasks", "-dn", required=True, help="Number of tasks associated to TF",
     type=int
 )
 @click.option(
@@ -86,17 +86,21 @@ def copy_data(model_path, file_specs_json_path):
     help="Number of tasks in model architecture, if different from number of TF tasks; if so, need to specify the set of task indices to limit to"
 )
 @click.option(
-    "--task-inds", "-i", default=None, type=str,
-    help="Comma-delimited set of indices (0-based) of the task(s) to compute importance scores for; by default aggregates over all tasks"
+    "--task-index", "-i", default=None, type=int,
+    help="Index (0-based) of the task for which to compute importance scores; by default aggregates over all tasks"
 )
 @click.option(
     "--out-hdf5-path", "-o", required=True,
-    help="Where to store the HDF5 with prediction/performance results"
+    help="Where to store the HDF5 with importance scores"
 )
 def main(
-    model_path, file_specs_json_path, num_tasks, model_num_tasks, task_inds,
-    out_hdf5_path
+    model_path, file_specs_json_path, data_num_tasks, model_num_tasks,
+    task_index, out_hdf5_path
 ):
+    if model_num_tasks and model_num_tasks != data_num_tasks:
+        assert task_index is not None  # Must specify which peaks
+        assert model_num_tasks == 1
+
     # First check that we are inside a container
     assert os.path.exists("/.dockerenv")
 
@@ -105,17 +109,17 @@ def main(
 
     # Go to the right directory and run the `predict_peaks.py` script
     os.chdir("/users/amtseng/tfmodisco/src")
-    comm = ["python", "-m", "extract.predict_peaks"]
+    comm = ["python", "-m", "tfmodisco.make_shap_scores"]
     comm += ["-m", model_path]
     comm += ["-f", file_specs_json_path]
-    comm += ["-n", str(num_tasks)]
+    comm += ["-dn", str(data_num_tasks)]
     comm += ["-o", out_hdf5_path]
     if model_num_tasks:
         # Limit the number of tasks in the model and the tasks to predict on
-        assert model_num_tasks < num_tasks
-        assert len(task_inds.split(",")) == model_num_tasks
+        assert model_num_tasks < data_num_tasks
         comm += ["-mn", str(model_num_tasks)]
-        comm += ["-i", task_inds]
+    if task_index is not None:
+        comm += ["-i", str(task_index)]
 
     print("Beginning run")
     sys.stdout.flush()
