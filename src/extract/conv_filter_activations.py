@@ -1,63 +1,32 @@
-# For each peak, computes the output prediction, the first-layer filter
-# activations, and the output predictions if each of the first-layer filter
-# activations were nullified; this is done over a single chosen model for all
-# peaks
-
 import os
 import model.train_profile_model as train_profile_model
 import model.profile_performance as profile_performance
 import extract.data_loading as data_loading
 import extract.compute_predictions as compute_predictions
 import keras
-import sacred
 import numpy as np
 import json
 import tqdm
 import h5py
+import click
 
-conv_filter_ex = sacred.Experiment("conv_filter")
-
-@conv_filter_ex.config
-def config():
-    # Length of input sequences
-    input_length = 1346
-
-    # Length of output profiles
-    profile_length = 1000
-
-    # Path to reference Fasta
-    reference_fasta = "/users/amtseng/genomes/hg38.fasta"
-    
-    # Path to chromosome splits
-    splits_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/chrom_splits.json"
-
-    with open(splits_json_path, "r") as f:
-        splits_json = json.load(f)
-
-    # Set of all chromosomes
-    full_chrom_set = splits_json["1"]["train"] + splits_json["1"]["val"] + \
-        splits_json["1"]["test"]
-
-    # Number of coordinates to keep for computing activations and nullified
-    # predictions
-    coord_keep_num = 10000
-
-
-def import_model(model_path, num_tasks, profile_length):
+def import_model(model_path, model_num_tasks, profile_length):
     """
     Imports a saved `profile_tf_binding_predictor` model.
     Arguments:
         `model_path`: path to model (ends in ".h5")
-        `num_tasks`: number of tasks in model
+        `model_num_tasks`: number of tasks in model
         `profile_length`: length of predicted profiles
     Returns the imported model.
     """
     custom_objects = {
         "kb": keras.backend,
         "profile_loss": train_profile_model.get_profile_loss_function(
-            num_tasks, profile_length
+            model_num_tasks, profile_length
         ),
-        "count_loss": train_profile_model.get_count_loss_function(num_tasks)
+        "count_loss": train_profile_model.get_count_loss_function(
+            model_num_tasks
+        )
     }
     return keras.models.load_model(model_path, custom_objects=custom_objects)
 
@@ -88,7 +57,6 @@ def compute_nlls(log_pred_profs, true_profs, true_counts):
     return nll, norm_nll
 
 
-@conv_filter_ex.capture
 def compute_filter_activations(
     model, files_spec_path, coords, input_length, profile_length,
     reference_fasta, batch_size=128
@@ -100,6 +68,9 @@ def compute_filter_activations(
         `model`: imported `profile_tf_binding_predictor` model
         `files_spec_path`: path to the JSON files spec for the model
         `coords`: an M x 3 array of what coords to run this for
+        `input_length`: length of input sequence
+        `profile_length`: length of output profiles
+        `reference_fasta`: path to reference FASTA
         `batch_size`: batch size for computation
     Returns an M x 2 x W x F array of activations, where W is the number of
     windows of the filter length in an input sequence, and F is the number of
@@ -149,11 +120,10 @@ def compute_filter_activations(
     return all_activations    
 
 
-@conv_filter_ex.capture
 def compute_nullified_predictions(
-    model, files_spec_path, coords, activations, filter_index, num_tasks,
-    input_length, profile_length, reference_fasta, full_chrom_set,
-    batch_size=128
+    model, files_spec_path, coords, activations, filter_index, data_num_tasks,
+    model_num_tasks, input_length, profile_length, reference_fasta,
+    task_inds=None, batch_size=128
 ):
     """
     From an imported model, computes the predictions for all peaks if one of
@@ -166,10 +136,20 @@ def compute_nullified_predictions(
         `activations`: an M x 2 x W x F array of activations for the original
             model, returned by `compute_filter_activations`
         `filter_index`: index of filter to nullify
+        `data_num_tasks`: number of tasks in the associated TF dataset
+        `model_num_tasks`: number of tasks in the model architecture
+        `input_length`: length of input sequence
+        `profile_length`: length of output profiles
+        `reference_fasta`: path to reference FASTA
+        `task_inds`: the set of tasks to compute predictions for; this limits
+            the input/output profiles; defaults to all tasks in the dataset
         `batch_size`: batch size for computation
     Returns an M x T x O x 2 array of predicted log profile probabilities and an
     M x T x 2 array of predicted log counts.
     """
+    if task_inds is not None:
+        assert len(task_inds) == model_num_tasks
+
     num_samples, num_filters = activations.shape[0], activations.shape[2]
 
     # Save the filter weights from the first layer
@@ -191,14 +171,18 @@ def compute_nullified_predictions(
     )
 
     # Run predictions
-    all_log_pred_profs = np.empty((len(coords), num_tasks, profile_length, 2))
-    all_log_pred_counts = np.empty((len(coords), num_tasks, 2))
+    all_log_pred_profs = np.empty(
+        (len(coords), model_num_tasks, profile_length, 2)
+    )
+    all_log_pred_counts = np.empty((len(coords), model_num_tasks, 2))
     num_batches = int(np.ceil(len(coords) / batch_size))
     for i in tqdm.trange(num_batches):
         batch_slice = slice(i * batch_size, (i + 1) * batch_size)
         batch = coords[batch_slice]
         log_pred_profs, log_pred_counts, _, _ = \
-            compute_predictions.get_predictions_batch(model, batch, input_func)
+            compute_predictions.get_predictions_batch(
+                model, batch, input_func, data_num_tasks, task_inds=task_inds
+            )
         all_log_pred_profs[batch_slice] = log_pred_profs
         all_log_pred_counts[batch_slice] = log_pred_counts
 
@@ -206,10 +190,10 @@ def compute_nullified_predictions(
     return all_log_pred_profs, all_log_pred_counts
  
 
-@conv_filter_ex.capture
 def compute_all_filter_predictions(
-    model_path, files_spec_path, num_tasks, out_hdf5_path, input_length,
-    profile_length, reference_fasta, full_chrom_set, coord_keep_num
+    model_path, files_spec_path, data_num_tasks, model_num_tasks, out_hdf5_path,
+    input_length, profile_length, reference_fasta, coord_keep_num,
+    task_inds=None, chrom_set=None
 ):
     """
     For the model at the given model path, for all peaks over all chromosomes,
@@ -220,8 +204,17 @@ def compute_all_filter_predictions(
     Arguments:
         `model_path`: path to trained `profile_tf_binding_predictor` model
         `files_spec_path`: path to the JSON files spec for the model
-        `num_tasks`: number of tasks in model
+        `data_num_tasks`: number of tasks in the associated TF dataset
+        `model_num_tasks`: number of tasks in the model architecture
         `out_hdf5_path`: path to save results
+        `input_length`: length of input sequence
+        `profile_length`: length of output profiles
+        `reference_fasta`: path to reference FASTA
+        `coord_keep_num`: the number of top-performing coordinates to keep
+        `chrom_set`: if provided, the set of chromosomes to run predictions,
+            nullified predictions, and activations for, M
+        `task_inds`: if provided, limit the coordinates and input/output
+            profiles to these tasks; by default uses all tasks
     Results will be saved in the specified HDF5, under the following keys:
         `predictions`:
             `log_pred_profs`: M x T x O x 2 array of predicted log profile
@@ -254,14 +247,15 @@ def compute_all_filter_predictions(
     h5_file = h5py.File(out_hdf5_path, "w")
 
     print("Importing model...")
-    model = import_model(model_path, num_tasks, profile_length)
+    model = import_model(model_path, model_num_tasks, profile_length)
 
     # Compute normal predictions and truth
     print("Computing predictions...")
     coords, log_pred_profs, log_pred_counts, true_profs, true_counts = \
         compute_predictions.get_predictions(
-            model, files_spec_path, input_length, profile_length, num_tasks,
-            reference_fasta, chrom_set=full_chrom_set
+            model, files_spec_path, input_length, profile_length,
+            data_num_tasks, model_num_tasks, reference_fasta,
+            chrom_set=chrom_set, task_inds=task_inds, 
         )
 
     # Compute NLL
@@ -312,7 +306,8 @@ def compute_all_filter_predictions(
     # Compute normal filter activations
     print("Computing filter activations...")
     activations = compute_filter_activations(
-        model, files_spec_path, coords
+        model, files_spec_path, coords, input_length, profile_length,
+        reference_fasta
     )
 
     print("Saving activations...")
@@ -325,18 +320,19 @@ def compute_all_filter_predictions(
     null_pred_group = h5_file.create_group("nullified_predictions")
     null_log_pred_profs = null_pred_group.create_dataset(
         "log_pred_profs",
-        (num_samples, num_filters, num_tasks, profile_length, 2),
+        (num_samples, num_filters, model_num_tasks, profile_length, 2),
         compression="gzip"
     )
     null_log_pred_counts = null_pred_group.create_dataset(
-        "log_pred_counts", (num_samples, num_filters, num_tasks, 2),
+        "log_pred_counts", (num_samples, num_filters, model_num_tasks, 2),
         compression="gzip"
     )
     null_nlls = null_pred_group.create_dataset(
-        "nlls", (num_samples, num_filters, num_tasks, 2), compression="gzip"
+        "nlls", (num_samples, num_filters, model_num_tasks, 2),
+        compression="gzip"
     )
     null_norm_nlls = null_pred_group.create_dataset(
-        "norm_nlls", (num_samples, num_filters, num_tasks, 2),
+        "norm_nlls", (num_samples, num_filters, model_num_tasks, 2),
         compression="gzip"
     )
 
@@ -344,7 +340,8 @@ def compute_all_filter_predictions(
         print("\tNullifying filter %d" % (filter_index + 1))
         log_pred_profs, log_pred_counts = compute_nullified_predictions(
             model, files_spec_path, coords, activations, filter_index,
-            num_tasks
+            data_num_tasks, model_num_tasks, input_length, profile_length,
+            reference_fasta, task_inds=task_inds
         )
         nlls, norm_nlls = compute_nlls(log_pred_profs, true_profs, true_counts)
         print("\tSaving null-filter predictions...")
@@ -356,18 +353,84 @@ def compute_all_filter_predictions(
     h5_file.close()
 
 
-@conv_filter_ex.command
-def run(model_path, files_spec_path, num_tasks, out_hdf5_path):
+@click.command()
+@click.option(
+    "--model-path", "-m", required=True, help="Path to trained model"
+)
+@click.option(
+    "--files-spec-path", "-f", required=True,
+    help="Path to JSON specifying file paths used to train model"
+)
+@click.option(
+    "--reference-fasta", "-r", default="/users/amtseng/genomes/hg38.fasta",
+    help="Path to reference genome Fasta"
+)
+@click.option(
+    "--chrom-sizes", "-c", default="/users/amtseng/genomes/hg38.canon.chrom.sizes",
+    help="Path to chromosome sizes"
+)
+@click.option(
+    "--input-length", "-il", default=2114, type=int,
+    help="Length of input sequences to model"
+)
+@click.option(
+    "--profile-length", "-pl", default=1000, type=int,
+    help="Length of profiles provided to and generated by model"
+)
+@click.option(
+    "--data-num-tasks", "-dn", required=True, help="Number of tasks associated to dataset",
+    type=int
+)
+@click.option(
+    "--model-num-tasks", "-mn", required=False, type=int,
+    help="Number of tasks in model architecture, if different from number of dataset tasks; if so, need to specify the set of task indices to limit to; defaults to the number of tasks in the dataset"
+)
+@click.option(
+    "--coord-keep-num", "-ck", default=10000,
+    help="Number of top-performing coordinates to use for computing activations/nullified filter predictions"
+)
+@click.option(
+    "--task-inds", "-i", default=None, type=str,
+    help="Comma-delimited list of indices (0-based) for the task(s) for which to compute predictions/activations; by default aggregates over all tasks"
+)
+@click.option(
+    "--chrom-set", "-cs", default=None, type=str,
+    help="Comma-delimited list of chromosomes for which to compute predictions/activations; defaults to all chromosomes in the given size file"
+)
+@click.option(
+    "--outfile", "-o", required=True, help="Where to store the hdf5 with scores"
+)
+def main(
+    model_path, files_spec_path, reference_fasta, chrom_sizes,
+    input_length, profile_length, data_num_tasks, model_num_tasks,
+    coord_keep_num, task_inds, chrom_set, outfile
+):
+    """
+    For the top-performing peaks in a dataset and trained profile model,
+    computes the filter activations for each filter, the output predictions as
+    normal, and the output predictions if each of the first-layer filters were
+    nullified and replaced with their average activation.
+    """
+    if model_num_tasks is None:
+        assert task_inds is None
+        model_num_tasks = data_num_tasks
+    else:
+        assert task_inds is not None
+        task_inds = [int(x) for x in task_inds.split(",")]
+        assert len(task_inds) == model_num_tasks
+
+    if chrom_set:
+        chrom_set = chrom_set.split(",")
+    else:
+        with open(chrom_sizes, "r") as f:
+            chrom_set = [line.split("\t")[0] for line in f]
+
     compute_all_filter_predictions(
-        model_path, files_spec_path, num_tasks, out_hdf5_path
+        model_path, files_spec_path, data_num_tasks, model_num_tasks, outfile,
+        input_length, profile_length, reference_fasta, coord_keep_num,
+        task_inds=task_inds, chrom_set=chrom_set
     )
 
 
-@conv_filter_ex.automain
-def main():
-    files_spec_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/E2F6/E2F6_training_paths.json"
-    model_path = "/users/amtseng/tfmodisco/models/trained_models/E2F6_fold4/2/model_ckpt_epoch_8.h5"
-    num_tasks = 2
-    out_hdf5_path = "/users/amtseng/tfmodisco/results/filter_activations/E2F6/E2F6_filter_activations_2.h5"
-
-    run(model_path, files_spec_path, num_tasks, out_hdf5_path)
+if __name__ == "__main__":
+    main()
