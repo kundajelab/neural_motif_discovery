@@ -11,6 +11,7 @@ echo "Copying initial scripts..."
 gsutil cp $localstem/tfmodisco/infra/gcp/run_hyperparam.py $bucket
 gsutil cp $localstem/tfmodisco/infra/gcp/run_pred_perf.py $bucket
 gsutil cp $localstem/tfmodisco/infra/gcp/run_shap.py $bucket
+gsutil cp $localstem/tfmodisco/infra/gcp/run_tfmodisco.py $bucket
 
 echo "Copying source code..."
 gsutil -m rsync -r $localstem/tfmodisco/src $bucketstem/tfmodisco/src

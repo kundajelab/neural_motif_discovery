@@ -107,7 +107,7 @@ def main(
     # Copy over the data
     copy_data(model_path, file_specs_json_path)
 
-    # Go to the right directory and run the `predict_peaks.py` script
+    # Go to the right directory and run the `make_shap_scores.py` script
     os.chdir("/users/amtseng/tfmodisco/src")
     comm = ["python", "-m", "tfmodisco.make_shap_scores"]
     comm += ["-m", model_path]
