@@ -8,9 +8,9 @@ performance_ex = sacred.Experiment("performance")
 
 @performance_ex.config
 def config():
-    # Smoothing parameter before computing profile JSD or correlations/MSE;
-    # specifies standard deviation and width of the Gaussian kernel; set width
-    # to 0 for no smoothing
+    # Smoothing parameter before computing NLL, profile JSD, or profile
+    # correlations/MSE; specifies standard deviation and width of the Gaussian
+    # kernel; set width to 0 for no smoothing
     prof_smooth_kernel_sigma = 7
     prof_smooth_kernel_width = 81
 
@@ -63,7 +63,7 @@ def profile_multinomial_nll(
         `true_counts`: a N x T x 2 array, containing the true total counts
             for each task and strand
         `smooth_pred_profs`: whether or not to smooth the predicted profiles
-            before computing JSD
+            before computing NLL
         `batch_size`: performs computation in a batch size of this many samples
     Returns an N x T array, containing the strand-pooled multinomial NLL for
     each sample and task.
@@ -413,7 +413,7 @@ def compute_performance_metrics(
     Returns a dictionary with the following:
         A N x T-array of the average negative log likelihoods for the profiles
             (given predicted probabilities, the likelihood for the true counts),
-            for each sample/task (strands pooled)
+            for each sample/task (strands averaged)
         A N x T array of average Jensen-Shannon divergence between the predicted
             and true profiles (strands averaged)
         A N x T array of the Pearson correlation of the predicted and true (log)
