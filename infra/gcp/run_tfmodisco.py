@@ -94,8 +94,8 @@ def main(
     sys.stdout.flush()
     for path in (outfile, seqlet_outfile, plot_save_dir):
         bucket_path = os.path.join(BUCKET_URL, path[1:])
-        proc = subprocess.Popen(["gsutil", "cp", "-r", path,bucket_path])
-    proc.wait()
+        proc = subprocess.Popen(["gsutil", "cp", "-r", path, bucket_path])
+        proc.wait()
 
     print("Done!")
 

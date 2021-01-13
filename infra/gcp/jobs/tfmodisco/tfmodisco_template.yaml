@@ -7,7 +7,7 @@ spec:
     spec:
       containers:
       - name: run-tfm-{tflower}-task{task}-fold{foldnum}{finetune}{hypkey}
-        image: kundajelab/tfmodisco_0.5.9.1:latest
+        image: kundajelab/tfmodisco:v0.5.10.0
         imagePullPolicy: Always
         resources:
           requests:

@@ -40,7 +40,7 @@ RUN pip install -r requirements.txt
 
 # Install TF-MoDISco
 RUN git clone https://github.com/kundajelab/tfmodisco.git
-RUN cd tfmodisco && git checkout v0.5.9.1
+RUN cd tfmodisco && git checkout variablelenseqletidentification
 RUN pip install -e tfmodisco
 
 # Set environment variables for Python
