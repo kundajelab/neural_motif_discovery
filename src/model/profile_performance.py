@@ -306,7 +306,8 @@ def mean_squared_error(arr1, arr2):
 
 def profile_corr_mse(
     true_prof_probs, pred_prof_probs, prof_smooth_kernel_sigma,
-    prof_smooth_kernel_width, batch_size=200
+    prof_smooth_kernel_width, smooth_true_profs=True, smooth_pred_profs=False,
+    batch_size=200
 ):
     """
     Returns the correlations of the true and predicted PROFILE counts (i.e.
@@ -316,6 +317,10 @@ def profile_corr_mse(
             RAW PROBABILITIES for each task and strand
         `pred_prof_probs`: a N x T x O x 2 array, containing the true profile
             RAW PROBABILITIES for each task and strand
+        `smooth_true_profs`: whether or not to smooth the true profiles before
+            computing correlations/MSE
+        `smooth_pred_profs`: whether or not to smooth the predicted profiles
+            before computing correlations/MSE
         `batch_size`: performs computation in a batch size of this many samples
     Returns 3 N x T arrays, containing the Pearson correlation, Spearman
     correlation, and mean squared error of the profile predictions (as
@@ -338,14 +343,19 @@ def profile_corr_mse(
         true_batch = true_prof_probs[start:end]  # Shapes: B x T x O x 2
         pred_batch = pred_prof_probs[start:end]
 
-        # Smooth along the output profile length (true profile only)
-        true_smooth = scipy.ndimage.gaussian_filter1d(
-            true_batch, sigma, axis=2, truncate=truncate
-        )
+        # Smooth along the output profile length
+        if smooth_true_profs:
+            true_batch = scipy.ndimage.gaussian_filter1d(
+                true_batch, sigma, axis=2, truncate=truncate
+            )
+        if smooth_pred_profs:
+            pred_batch = scipy.ndimage.gaussian_filter1d(
+                pred_batch, sigma, axis=2, truncate=truncate
+            )
 
         # Flatten by pooling strands
         new_shape = (true_batch.shape[0], num_tasks, -1)
-        true_flat = np.reshape(true_smooth, new_shape)
+        true_flat = np.reshape(true_batch, new_shape)
         pred_flat = np.reshape(pred_batch, new_shape)
 
         pears[start:end] = pearson_corr(true_flat, pred_flat)
@@ -467,7 +477,8 @@ def compute_performance_metrics(
     )
     prof_pears, prof_spear, prof_mse = profile_corr_mse(
         true_prof_probs, pred_prof_probs, prof_smooth_kernel_sigma,
-        prof_smooth_kernel_width
+        prof_smooth_kernel_width, smooth_true_profs=smooth_true_profs,
+        smooth_pred_profs=smooth_pred_profs
     )
     if print_updates:
         end = datetime.now()

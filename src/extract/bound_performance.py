@@ -165,14 +165,15 @@ def compute_performance_bounds(
     computed as follows:
     Profile metrics:
         Lower bound:
-            The predicted profiles are either a uniform distribution or the
-            average profile over all peaks. The observed profiles are simply the
-            true profiles from the experiment. For each profile metric, we take
-            the better value (uniform vs. average)
+            The predicted profiles are a uniform distribution. The observed
+            profiles are simply the true profiles from the experiment.
         Upper bound:
             Each observed profile is randomly partitioned into two pseudo-
             replicates. One is treated as the predicted profiles, the other
             is treated as the true profiles.
+        Average:
+            We also compute the profile metrics if the predicted profiles are
+            the average profile across all peaks.
     Count metrics:
         Lower bound:
             The predicted counts are the true counts shuffled randomly.
@@ -199,6 +200,9 @@ def compute_performance_bounds(
         `performance_upper`:
             Keys and values defined in `profile_performance.py`, as well as
             `nll_log_probs`
+        `profile_performance_av`:
+            Keys and values defined in `profile_performance.py`, as well as
+            `nll_log_probs` (excluding all total counts metrics)
     """
     # Import all coordinates
     peak_coords = import_peak_coordinates(files_spec_path, chrom_set=chrom_set)
@@ -214,6 +218,7 @@ def compute_performance_bounds(
     coord_group = h5_file.create_group("coords")
     lower_perf_group = h5_file.create_group("performance_lower")
     upper_perf_group = h5_file.create_group("performance_upper")
+    avg_perf_group = h5_file.create_group("profile_performance_avg")
     coords_chrom_dset = coord_group.create_dataset(
         "coords_chrom", (num_examples,),
         dtype=h5py.string_dtype(encoding="ascii"), compression="gzip"
@@ -231,7 +236,7 @@ def compute_performance_bounds(
         "profile_mse"
     )
     count_keys = ("count_pearson", "count_spearman", "count_mse")
-    lower_perf_dsets, upper_perf_dsets = {}, {}
+    lower_perf_dsets, upper_perf_dsets, avg_perf_dsets = {}, {}, {}
     for group, dsets in [
         (lower_perf_group, lower_perf_dsets),
         (upper_perf_group, upper_perf_dsets)
@@ -244,6 +249,10 @@ def compute_performance_bounds(
             dsets[key] = group.create_dataset(
                 key, count_metric_shape, dtype=float, compression="gzip"
             )
+    for key in profile_keys:
+        avg_perf_dsets[key] = avg_perf_group.create_dataset(
+            key, profile_metric_shape, dtype=float, compression="gzip"
+        )
 
     # Create arrays to hold total counts values
     true_log_counts = np.empty((num_examples, num_tasks, 2))
@@ -287,23 +296,23 @@ def compute_performance_bounds(
         avg_prof_log_probs = profs_to_log_prob_profs(avg_profs)
 
         # Lower bound (uniform)
-        lower_perf_uni_dict = profile_performance.compute_performance_metrics(
+        lower_perf_dict = profile_performance.compute_performance_metrics(
             true_profs, uni_prof_log_probs,
             true_counts, np.ones_like(true_counts),  # Don't care about counts
             smooth_pred_profs=True, print_updates=False
         )
-        lower_perf_uni_dict["nll_log_probs"] = compute_nll_log_probs(
-            lower_perf_uni_dict["nll"], true_profs
+        lower_perf_dict["nll_log_probs"] = compute_nll_log_probs(
+            lower_perf_dict["nll"], true_profs
         )
         
-        # Lower bound (average)
-        lower_perf_avg_dict = profile_performance.compute_performance_metrics(
+        # Average profile performance
+        avg_perf_dict = profile_performance.compute_performance_metrics(
             true_profs, avg_prof_log_probs,
             true_counts, np.ones_like(true_counts),  # Don't care about counts
             smooth_pred_profs=True, print_updates=False
         )
-        lower_perf_avg_dict["nll_log_probs"] = compute_nll_log_probs(
-            lower_perf_avg_dict["nll"], true_profs
+        avg_perf_dict["nll_log_probs"] = compute_nll_log_probs(
+            avg_perf_dict["nll"], true_profs
         )
     
         # Upper bound
@@ -325,32 +334,18 @@ def compute_performance_bounds(
             upper_perf_dict["nll_log_probs"] * ratio
 
         # Remove non-profile metrics
-        for d in (lower_perf_uni_dict, lower_perf_avg_dict, upper_perf_dict):
+        for d in (lower_perf_dict, avg_perf_dict, upper_perf_dict):
             for key in list(d.keys()):
                 if key.startswith("count_"):
                     del d[key]
-
-        # Select best values for profile lower bounds
-        lower_perf_dict = {}
-        for key in list(lower_perf_uni_dict.keys()):
-            if key in ("profile_pearson", "profile_spearman"):
-                # Use fmax to ignore NaNs; note that Spearman correlation with a
-                # uniform distribution is always NaN
-                lower_perf_dict[key] = np.fmax(
-                    lower_perf_uni_dict[key],
-                    lower_perf_avg_dict[key]
-                )
-            else:
-                lower_perf_dict[key] = np.fmin(
-                    lower_perf_uni_dict[key],
-                    lower_perf_avg_dict[key]
-                )
 
         # Write results
         for key in lower_perf_dict:
             lower_perf_dsets[key][batch_slice] = lower_perf_dict[key]
         for key in upper_perf_dict:
             upper_perf_dsets[key][batch_slice] = upper_perf_dict[key]
+        for key in avg_perf_dict:
+            avg_perf_dsets[key][batch_slice] = avg_perf_dict[key]
 
     # Finally, compute and save the counts metrics
     
