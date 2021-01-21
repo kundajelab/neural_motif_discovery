@@ -175,7 +175,7 @@ def create_tf_job_specs(
             "%s_multitask_profile_finetune_task%d_fold%d_%s_figs" % (tf, task_index, fold_num, hyp_key_short)
         )
         filled = template.format(
-            tflower=tf_lower, task=task_index, finetune="-finetune",
+            tflower=tf_lower, task=("all%d" % task_index), finetune="-finetune",
             foldnum=fold_num, impscorepath=in_path,
             hypkey=("-" + hyp_key_short), hypscorekey=hyp_score_key,
             outfile=out_path, seqletoutfile=seqlet_out_path,
@@ -352,8 +352,8 @@ def main(
             finetune_multitask_def, finetune_singletask_defs, hyp_score_key
         )
 
-    for spec_path in spec_paths:
-        submit_job(spec_path)
+        for spec_path in spec_paths:
+            submit_job(spec_path)
 
 
 if __name__ == "__main__":
