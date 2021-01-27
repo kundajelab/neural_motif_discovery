@@ -125,7 +125,6 @@ def main(
 
     # Construct workflow pipeline
     tfm_workflow = modisco.tfmodisco_workflow.workflow.TfModiscoWorkflow(
-    	sliding_window_size=21,
     	flank_size=10,
         target_seqlet_fdr=0.05,
     	seqlets_to_patterns_factory=modisco.tfmodisco_workflow.seqlets_to_patterns.TfModiscoSeqletsToPatternsFactory(
