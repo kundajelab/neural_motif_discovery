@@ -106,41 +106,17 @@ def profs_to_log_prob_profs(profiles, pseudocount=0.0001, batch_size=1000):
     return log_probs
 
 
-def split_profiles_into_pseudoreplicates(profiles, batch_size=1000):
+def compute_cross_entropy_from_nll(nlls, profiles, batch_size=1000):
     """
-    From an N x T x O x 2 array of profiles (as raw counts), splits each of the
-    2NT profiles into pseudoreplicates by randomly partitioning each profile
-    into two. Returns two N x T x O x 2 arrays.
-    """
-    pseudo_1 = np.empty_like(profiles, dtype=float)
-    pseudo_2 = np.empty_like(profiles, dtype=float)
-    num_batches = int(np.ceil(len(profiles) / batch_size))
-    for i in range(num_batches):
-        batch_slice = slice(i * batch_size, (i + 1) * batch_size)
-        prof_slice = profiles[batch_slice]
-
-        # First pseudoreplicate: draw from binomial distribution with p = 0.5
-        p1_slice = np.random.binomial(
-            profiles[batch_slice].astype(int), 0.5
-        ).astype(float)
-
-        pseudo_1[batch_slice] = p1_slice
-        pseudo_2[batch_slice] = prof_slice - p1_slice
-
-    return pseudo_1, pseudo_2
-
-
-def compute_nll_log_probs(nlls, profiles, batch_size=1000):
-    """
-    Computes the log probability portion of the NLL by adding back
-    log(N!/x1!...xk!).
+    Computes the cross entropy of the profiles from the log probability portion
+    of the NLL by adding back log(N!/x1!...xk!) and dividing by the true counts.
     Arguments:
         `nlls`: An N x T array of NLLs (strands averaged)
         `profiles`: An N x T x O x 2 corresponding array of true profile counts
             (that were used to compute the NLLs)
-    Returns an N x T array of NLL log probabilities.
+    Returns an N x T array of cross entropy values.
     """
-    log_probs = np.empty_like(nlls)
+    cross_ents = np.empty_like(nlls)
     num_batches = int(np.ceil(len(nlls) / batch_size))
     for i in range(num_batches):
         batch_slice = slice(i * batch_size, (i + 1) * batch_size)
@@ -153,10 +129,12 @@ def compute_nll_log_probs(nlls, profiles, batch_size=1000):
         log_x_fact_sum = np.sum(log_x_fact, axis=2)
         diff = np.mean(log_n_fact + log_x_fact_sum, axis=2)  # Shape: N x T
 
-        log_probs[batch_slice] = nll_slice + diff
-    return log_probs
+        log_probs = nll_slice + diff
+        cross_ents[batch_slice] = log_probs / np.mean(counts, axis=2)
+    return cross_ents
 
 
+@bound_perf_ex.capture
 def compute_performance_bounds(
     files_spec_path, chrom_set, out_hdf5, batch_size=1000
 ):
@@ -168,9 +146,8 @@ def compute_performance_bounds(
             The predicted profiles are a uniform distribution. The observed
             profiles are simply the true profiles from the experiment.
         Upper bound:
-            Each observed profile is randomly partitioned into two pseudo-
-            replicates. One is treated as the predicted profiles, the other
-            is treated as the true profiles.
+            The true profile (unsmoothed) is treated as both the observed and
+            predicted profile.
         Average:
             We also compute the profile metrics if the predicted profiles are
             the average profile across all peaks.
@@ -178,10 +155,10 @@ def compute_performance_bounds(
         Lower bound:
             The predicted counts are the true counts shuffled randomly.
         Upper bound:
-            The predicted/true counts are the counts derived from the pseudo-
-            replicates.
-        We also include a new metric, `nll_log_probs`, which is the multinomial
-        NLL without the N!/x1!...xk! term.
+            The predicted/true counts are from pseudoreplicates.
+        We also include a new metric, `cross_ent`, which is the cross entropy
+        between two profiles. It is equal to the NLL without the N!/x1!...xk!
+        term, normalized by total counts.
     Arguments:
         `files_spec_path`: path to file specifications JSON
         `chrom_set`: if given, limit the coordinates to these chromosomes; by
@@ -196,13 +173,13 @@ def compute_performance_bounds(
             `coords_end`: N-array
         `performance_lower`:
             Keys and values defined in `profile_performance.py`, as well as
-            `nll_log_probs`
+            `cross_ent`
         `performance_upper`:
             Keys and values defined in `profile_performance.py`, as well as
-            `nll_log_probs`
+            `cross_ent`
         `profile_performance_av`:
             Keys and values defined in `profile_performance.py`, as well as
-            `nll_log_probs` (excluding all total counts metrics)
+            `cross_ent` (excluding all total counts metrics)
     """
     # Import all coordinates
     peak_coords = import_peak_coordinates(files_spec_path, chrom_set=chrom_set)
@@ -232,7 +209,7 @@ def compute_performance_bounds(
     profile_metric_shape = (num_examples, num_tasks)
     count_metric_shape = (num_tasks,)
     profile_keys = (
-        "nll", "nll_log_probs", "jsd", "profile_pearson", "profile_spearman",
+        "nll", "cross_ent", "jsd", "profile_pearson", "profile_spearman",
         "profile_mse"
     )
     count_keys = ("count_pearson", "count_spearman", "count_mse")
@@ -256,8 +233,6 @@ def compute_performance_bounds(
 
     # Create arrays to hold total counts values
     true_log_counts = np.empty((num_examples, num_tasks, 2))
-    pseudo_1_log_counts = np.empty((num_examples, num_tasks, 2))
-    pseudo_2_log_counts = np.empty((num_examples, num_tasks, 2))
 
     # First, compute all of the profile metrics batch by batch; save the counts
     # for later
@@ -272,20 +247,11 @@ def compute_performance_bounds(
     
         # Get true profiles for this batch
         true_profs = get_true_training_profiles_batch(coords, files_spec_path)
+        true_prof_log_probs = profs_to_log_prob_profs(true_profs)
         true_counts = np.sum(true_profs, axis=2)
-
-        # Generate pseudoreplicates
-        pseudo_1_profs, pseudo_2_profs = split_profiles_into_pseudoreplicates(
-            true_profs
-        )
-        pseudo_1_counts = np.sum(pseudo_1_profs, axis=2)
-        pseudo_2_counts = np.sum(pseudo_2_profs, axis=2)
-        pseudo_2_prof_log_probs = profs_to_log_prob_profs(pseudo_2_profs)
 
         # Save log counts (for counts metrics later)
         true_log_counts[batch_slice] = np.log(true_counts + 1)
-        pseudo_1_log_counts[batch_slice] = np.log(pseudo_1_counts + 1)
-        pseudo_2_log_counts[batch_slice] = np.log(pseudo_2_counts + 1)
 
         # Generate uniform profile
         uni_profs = np.ones_like(true_profs)
@@ -300,8 +266,9 @@ def compute_performance_bounds(
             true_profs, uni_prof_log_probs,
             true_counts, np.ones_like(true_counts),  # Don't care about counts
             smooth_pred_profs=True, print_updates=False
+            # Technically, smoothing the uniform profiles here is unnecessary
         )
-        lower_perf_dict["nll_log_probs"] = compute_nll_log_probs(
+        lower_perf_dict["cross_ent"] = compute_cross_entropy_from_nll(
             lower_perf_dict["nll"], true_profs
         )
         
@@ -311,28 +278,20 @@ def compute_performance_bounds(
             true_counts, np.ones_like(true_counts),  # Don't care about counts
             smooth_pred_profs=True, print_updates=False
         )
-        avg_perf_dict["nll_log_probs"] = compute_nll_log_probs(
+        avg_perf_dict["cross_ent"] = compute_cross_entropy_from_nll(
             avg_perf_dict["nll"], true_profs
         )
     
         # Upper bound
         upper_perf_dict = profile_performance.compute_performance_metrics(
-            pseudo_1_profs, pseudo_2_prof_log_probs,
-            pseudo_1_counts, np.ones_like(pseudo_1_counts),  # Don't care about counts
-            smooth_pred_profs=True, print_updates=False
+            true_profs, true_prof_log_probs,
+            true_counts, np.ones_like(true_counts),  # Don't care about counts
+            smooth_true_profs=False, smooth_pred_profs=False,
+            print_updates=False
         )
-        upper_perf_dict["nll_log_probs"] = compute_nll_log_probs(
-            upper_perf_dict["nll"], pseudo_1_profs
+        upper_perf_dict["cross_ent"] = compute_cross_entropy_from_nll(
+            upper_perf_dict["nll"], true_profs 
         )
-        # Artificially re-inflate the NLL log probs by multiplying by ratio of
-        # pseudoreplicate total counts to true counts (averaged over strands);
-        # this is needed because the pseudoreplicates have roughly half the
-        # number of reads as the true profile
-        ratio = np.mean(true_counts, axis=2) / np.mean(pseudo_1_counts, axis=2)
-        # Shape: N x T
-        upper_perf_dict["nll_log_probs"] = \
-            upper_perf_dict["nll_log_probs"] * ratio
-
         # Remove non-profile metrics
         for d in (lower_perf_dict, avg_perf_dict, upper_perf_dict):
             for key in list(d.keys()):
@@ -366,9 +325,9 @@ def compute_performance_bounds(
     
     # Upper bound
     count_pears, count_spear, count_mse = profile_performance.count_corr_mse(
-        pseudo_1_log_counts, pseudo_2_log_counts
+        true_log_counts, true_log_counts 
     )
-    upper_perf_dict = {
+    upper_perf_dict = {  # Should be al 1, 1, 0
         "count_pearson": count_pears,
         "count_spearman": count_spear,
         "count_mse": count_mse

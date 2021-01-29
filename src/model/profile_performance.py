@@ -415,10 +415,11 @@ def compute_performance_metrics(
         `log_pred_counts`: a N x T x 2 array, containing the predicted LOG total
             counts for each task and strand
         `smooth_true_profs`: if True, smooth the true profiles before computing
-            JSD; true profiles will not be smoothed for any other metric
+            JSD and correlations; true profiles will not be smoothed for any
+            other metric
         `smooth_pred_profs`: if True, smooth the predicted profiles before
-            computing JSD and NLL; predicted profiles will not be smoothed for
-            any other metric
+            computing NLL, JSD, and correlations; predicted profiles will not be
+            smoothed for any other metric
         `print_updates`: if True, print out updates and runtimes
     Returns a dictionary with the following:
         A N x T-array of the average negative log likelihoods for the profiles
