@@ -7,7 +7,8 @@ import modisco
 import click
 
 def import_shap_scores(
-    shap_scores_hdf5, hyp_score_key, center_cut_size=None, chrom_set=None
+    shap_scores_hdf5, hyp_score_key, center_cut_size=None, chrom_set=None,
+    remove_non_acgt=True
 ):
     """
     Imports the SHAP scores generated/saved by `make_shap_scores.py`, and
@@ -23,6 +24,8 @@ def import_shap_scores(
             SHAP scores
         `chrom_set`: list of chromosomes to restrict to; if None, use all
             chromosomes available in the SHAP scores
+        `remove_non_acgt`: if True, remove any sequences (after being cut down
+            to size) which have a base other than ACGT (e.g. N)
     Returns the hypothetical importance scores, actual importance scores,
     corresponding one-hot encoded input sequences, and coordinates. The first
     three are N x L x 4 arrays, and the last is an N x 3 object array.
@@ -69,15 +72,16 @@ def import_shap_scores(
 
     if chrom_set:
         mask = np.isin(coords[:, 0], chrom_set)
-        hyp_scores = hyp_scores[mask]
-        act_scores = act_scores[mask]
-        one_hot_seqs = one_hot_seqs[mask]
-        coords = coords[mask]
+        hyp_scores, act_scores, one_hot_seqs, coords = \
+            hyp_scores[mask], act_scores[mask], one_hot_seqs[mask], coords[mask]
 
-    # Remove any examples in which the input sequence is not all ACGT
-    mask = np.sum(one_hot_seqs, axis=(1, 2)) == center_cut_size
+    if remove_non_acgt:
+        # Remove any examples in which the input sequence is not all ACGT
+        mask = np.sum(one_hot_seqs, axis=(1, 2)) == center_cut_size
+        hyp_scores, act_scores, one_hot_seqs, coords = \
+            hyp_scores[mask], act_scores[mask], one_hot_seqs[mask], coords[mask]
 
-    return hyp_scores[mask], act_scores[mask], one_hot_seqs[mask], coords[mask]
+    return hyp_scores, act_scores, one_hot_seqs, coords
 
 
 @click.command()
@@ -125,6 +129,7 @@ def main(
 
     # Construct workflow pipeline
     tfm_workflow = modisco.tfmodisco_workflow.workflow.TfModiscoWorkflow(
+        sliding_window_size=21,
     	flank_size=10,
         target_seqlet_fdr=0.05,
     	seqlets_to_patterns_factory=modisco.tfmodisco_workflow.seqlets_to_patterns.TfModiscoSeqletsToPatternsFactory(
