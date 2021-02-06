@@ -3,9 +3,9 @@ import subprocess
 import numpy as np
 import pandas as pd
 import tempfile
-import motif_bench.read_motifs
 
-BACKGROUND_FREQS = np.array([0.27, 0.23, 0.23, 0.27])
+BACKGROUND_FREQS = np.array([0.25, 0.25, 0.25, 0.25])
+DATABASE_PATH = "/users/amtseng/tfmodisco/data/processed/motif_databases/JASPAR2020_CORE_vertebrates_non-redundant_pfms_meme.txt"
 
 def export_pfms_to_meme_format(
     pfms, outfile, background_freqs=None, names=None
@@ -44,21 +44,26 @@ def export_pfms_to_meme_format(
             f.write("\n")
 
 
-def run_tomtom(target_motif_file, query_motif_file, outdir, show_output=True):
+def run_tomtom(
+    query_motif_file, target_motif_file, outdir, show_output=True
+):
     """
     Runs TOMTOM given the target and query motif files. The default threshold
     of q < 0.5 is used to filter for matches.
     Arguments:
-        `target_motif_file`: file containing motifs in MEME format, which will
-            be used to search for matches
         `query_motif_file`: file containing motifs in MEME format, which will
             be the query motifs for which matches are found
+        `target_motif_file`: file containing motifs in MEME format, which will
+            be used to search for matches
         `outdir`: path to directory to store results
         `show_output`: whether or not to show TOMTOM output
     """
     comm = ["tomtom"]
     comm += [query_motif_file, target_motif_file]
     comm += ["-oc", outdir]
+    comm += ["-no-ssc"]
+    comm += ["-dist", "pearson"]
+    comm += ["-min-overlap", "5"]
     proc = subprocess.run(comm, capture_output=(not show_output))
 
 
@@ -76,15 +81,15 @@ def import_tomtom_results(tomtom_dir):
     )
 
 
-def match_motifs(
-    target_pfms, query_pfms, temp_dir=None, show_tomtom_output=False
+def match_motifs_to_targets(
+    query_pfms, target_pfms, temp_dir=None, show_tomtom_output=False
 ):
     """
     For each motif in the query PFMs, finds the best match to the target PFMs,
     based on TOMTOM q-value.
     Arguments:
-        `target_pfms`: list of L x 4 PFMs to match to
         `query_pfms`: list of L x 4 PFMs to look for matches for
+        `target_pfms`: list of L x 4 PFMs to match to
         `temp_dir`: a temporary directory to store intermediates; defaults to
             a randomly created directory
         `show_tomtom_output`: whether to show TOMTOM output when running
@@ -100,15 +105,15 @@ def match_motifs(
         temp_dir_obj = None
 
     # Convert motifs to MEME format
-    target_motif_file = os.path.join(temp_dir, "target_motifs.txt")
     query_motif_file = os.path.join(temp_dir, "query_motifs.txt")
-    export_pfms_to_meme_format(target_pfms, target_motif_file)
+    target_motif_file = os.path.join(temp_dir, "target_motifs.txt")
     export_pfms_to_meme_format(query_pfms, query_motif_file)
+    export_pfms_to_meme_format(target_pfms, target_motif_file)
 
     # Run TOMTOM
     tomtom_dir = os.path.join(temp_dir, "tomtom")
     run_tomtom(
-        target_motif_file, query_motif_file, tomtom_dir,
+        query_motif_file, target_motif_file, tomtom_dir,
         show_output=show_tomtom_output
     )
 
@@ -130,8 +135,66 @@ def match_motifs(
     return np.array(match_inds)
         
 
+def match_motifs_to_database(
+    query_pfms, top_k=5, temp_dir=None, show_tomtom_output=False
+):
+    """
+    For each motif in the query PFMs, finds the best matches to the TOMTOM
+    database, ranked by TOMTOM q-value.
+    Arguments:
+        `query_pfms`: list of L x 4 PFMs to look for matches for
+        `top_k`: the number of motifs to return based on q-value
+        `temp_dir`: a temporary directory to store intermediates; defaults to
+            a randomly created directory
+        `show_tomtom_output`: whether to show TOMTOM output when running
+    Returns a list of lists of (motif name, motif sequence, q-value) tuples
+    parallel to `query_pfms`, where each sublist of tuples is the set of motif
+    names, motif sequences (as ACGT strings), and q-values for the corresponding
+    query motif. Each sublit is sorted in ascending order by q-value. If fewer
+    than `top_k` matches are found (based on TOMTOM's threshold), the returned
+    sublist will be shorter (and may even be empty).
+    """
+    if temp_dir is None:
+        temp_dir_obj = tempfile.TemporaryDirectory()
+        temp_dir = temp_dir_obj.name
+    else:
+        temp_dir_obj = None
+
+    # Convert motifs to MEME format
+    query_motif_file = os.path.join(temp_dir, "query_motifs.txt")
+    export_pfms_to_meme_format(query_pfms, query_motif_file)
+
+    # Run TOMTOM
+    tomtom_dir = os.path.join(temp_dir, "tomtom")
+    run_tomtom(
+        query_motif_file, DATABASE_PATH, tomtom_dir,
+        show_output=show_tomtom_output
+    )
+
+    # Find results, mapping each query motif to target index
+    # The query/target IDs are the indices
+    tomtom_table = import_tomtom_results(tomtom_dir)
+    matches = []
+    for i in range(len(query_pfms)):
+        rows = tomtom_table[tomtom_table["Query_ID"] == i]
+        if rows.empty:
+            matches.append([])
+            continue
+        rows = rows.sort_values("q-value").head(top_k)
+        tups= list(
+            zip(rows["Target_ID"], rows["Target_consensus"], rows["q-value"])
+        )
+        matches.append(tups)
+
+    if temp_dir_obj is not None:
+        temp_dir_obj.cleanup()
+
+    return matches
+
+
 if __name__ == "__main__":
-    import modisco.visualization.viz_sequence as viz_sequence
+    import motif_bench.read_motifs as read_motifs
+    import deeplift.visualization.viz_sequence as viz_sequence
 
     tf_name = "E2F6"
     fold = 4
@@ -143,9 +206,11 @@ if __name__ == "__main__":
     target_pfms = read_motifs.import_homer_pfms(homer_peak_results_path)[0]
     query_pfms = read_motifs.import_meme_pfms(meme_peak_results_path)[0]
     
-    match_inds = match_motifs(target_pfms, query_pfms)
+    match_inds = match_motifs_to_targets(query_pfms, target_pfms)
     for query_ind, target_ind in enumerate(match_inds):
         if target_ind == -1:
             continue
         viz_sequence.plot_weights(query_pfms[query_ind])
         viz_sequence.plot_weights(target_pfms[target_ind])
+
+    matches = match_motifs_to_database(query_pfms)

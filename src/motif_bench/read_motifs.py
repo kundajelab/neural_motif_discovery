@@ -8,7 +8,7 @@ BASES = ["A", "C", "G", "T"]
 BASE_IND_DICT = {base: i for i, base in enumerate(BASES)}
 DINUCS = [x + y for x in BASES for y in BASES]
 DICHIPMUNK_DINUC_PREFIXES = [dinuc + "|" for dinuc in DINUCS]
-BACKGROUND_FREQS = np.array([0.27, 0.23, 0.23, 0.27])
+BACKGROUND_FREQS = np.array([0.25, 0.25, 0.25, 0.25])
 
 def pfm_info_content(pfm, pseudocount=0.001):
     """

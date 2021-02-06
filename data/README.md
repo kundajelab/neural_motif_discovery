@@ -71,3 +71,9 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/processed/`
 - `mappability/`
 	- BigWig tracks of read mappabilities, using UMAP, for various k-mer lengths
 	- Downloaded from `http://hgdownload.soe.ucsc.edu/gbdb/hg38/hoffmanMappability/k24.Umap.MultiTrackMappability.bw` and `http://hgdownload.soe.ucsc.edu/gbdb/hg38/hoffmanMappability/k100.Umap.MultiTrackMappability.bw`
+
+- `motif_databases/`
+	- Known motifs downloaded from other sources
+	- `JASPAR2020_CORE_vertebrates_non-redundant_pfms_meme.txt`
+		- Vertebrate motifs from JASPAR in MEME format (from [here](http://jaspar.genereg.net/downloads/))
+		- The motif IDs have been concatenated with the names with an underscore using: `awk '{if ($1 == "MOTIF") {print $1 " " $2 "_" $3} else {print $0}}'`
