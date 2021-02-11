@@ -5,7 +5,33 @@ import pandas as pd
 import tempfile
 
 BACKGROUND_FREQS = np.array([0.25, 0.25, 0.25, 0.25])
-DATABASE_PATH = "/users/amtseng/tfmodisco/data/processed/motif_databases/JASPAR2020_CORE_vertebrates_non-redundant_pfms_meme.txt"
+DATABASE_PATH = "/users/amtseng/tfmodisco/data/processed/motif_databases/HOCOMOCO_JASPAR_motifs.txt"
+DATABASE_PFMS = None
+
+def import_database_pfms(database_path):
+    """
+    Imports the database of PFMs by reading through the entire database and
+    constructing a dictionary mapping motif IDs to NumPy arrays of PFMs.
+    """
+    motif_dict = {}
+    with open(database_path, "r") as f:
+        try:
+            while True:
+                line = next(f)
+                if line.startswith("MOTIF"):
+                    key = line.strip().split()[1]
+                    header = next(f)
+                    motif_width = int(header.split()[5])
+                    motif = np.empty((motif_width, 4))
+                    for i in range(motif_width):
+                        motif[i] = np.array([
+                            float(x) for x in next(f).strip().split()
+                        ])
+                    motif_dict[key] = motif
+        except StopIteration:
+            pass
+    return motif_dict
+
 
 def export_pfms_to_meme_format(
     pfms, outfile, background_freqs=None, names=None
@@ -147,13 +173,19 @@ def match_motifs_to_database(
         `temp_dir`: a temporary directory to store intermediates; defaults to
             a randomly created directory
         `show_tomtom_output`: whether to show TOMTOM output when running
-    Returns a list of lists of (motif name, motif sequence, q-value) tuples
+    Returns a list of lists of (motif name, motif PFM, q-value) tuples
     parallel to `query_pfms`, where each sublist of tuples is the set of motif
-    names, motif sequences (as ACGT strings), and q-values for the corresponding
+    names, motif PFMs (as NumPy arrays), and q-values for the corresponding
     query motif. Each sublit is sorted in ascending order by q-value. If fewer
     than `top_k` matches are found (based on TOMTOM's threshold), the returned
     sublist will be shorter (and may even be empty).
     """
+    # First make sure we have imported the database PFMs
+    global DATABASE_PFMS
+    if DATABASE_PFMS is None:
+        DATABASE_PFMS = import_database_pfms(DATABASE_PATH)
+
+
     if temp_dir is None:
         temp_dir_obj = tempfile.TemporaryDirectory()
         temp_dir = temp_dir_obj.name
@@ -181,9 +213,10 @@ def match_motifs_to_database(
             matches.append([])
             continue
         rows = rows.sort_values("q-value").head(top_k)
-        tups= list(
-            zip(rows["Target_ID"], rows["Target_consensus"], rows["q-value"])
-        )
+        tups = list(zip(rows["Target_ID"], rows["q-value"]))
+        tups = [
+            (tup[0], DATABASE_PFMS[tup[0]], tup[1]) for tup in tups
+        ]
         matches.append(tups)
 
     if temp_dir_obj is not None:

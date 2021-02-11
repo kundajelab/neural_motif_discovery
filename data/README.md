@@ -77,3 +77,7 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/processed/`
 	- `JASPAR2020_CORE_vertebrates_non-redundant_pfms_meme.txt`
 		- Vertebrate motifs from JASPAR in MEME format (from [here](http://jaspar.genereg.net/downloads/))
 		- The motif IDs have been concatenated with the names with an underscore using: `awk '{if ($1 == "MOTIF") {print $1 " " $2 "_" $3} else {print $0}}'`
+	- `HOCOMOCOv11_full_HUMAN_mono_meme_format.meme`
+		- HOCOMOCO v11 human motifs in MEME format (from [here](https://hocomoco11.autosome.ru/downloads_v11))
+	- `HOCOMOCO_JASPAR_motifs.txt`
+		- Combination of both JASPAR and HOCOMOCO motifs
