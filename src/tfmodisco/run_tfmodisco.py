@@ -84,6 +84,47 @@ def import_shap_scores(
     return hyp_scores, act_scores, one_hot_seqs, coords
 
 
+def import_tfmodisco_results(
+    tfm_results_path, hyp_scores, one_hot_seqs, center_cut_size=None
+):
+    """
+    Imports the TF-MoDISco results object.
+    Arguments:
+        `tfm_results_path`: path to HDF5 containing TF-MoDISco results
+        `hyp_scores`: hypothetical importance scores used for this run, an
+            N x L x 4 array
+        `one_hot_seqs`: input sequences used for this run, an N x L x 4 array
+        `center_cut_size`: centered cut size of SHAP scores used; the input
+            sequences may already have length L equal to this, or if they are
+            longer the sequences will be cut
+    Although this function is not used to run TF-MoDISco in this script, it can
+    be useful for importing the results later (in conjuction with
+    `import_shap_scores`).
+    """
+    assert hyp_scores.shape == one_hot_seqs.shape
+    input_length = hyp_scores.shape[1]
+
+    if input_length != center_cut_size:
+        # Everything not cut to `center_cut_size`
+        assert act_scores.shape[1] > center_cut_size
+        cut_start = (input_length // 2) - (center_cut_size // 2)
+        cut_end = cut_start + center_cut_size
+        hyp_scores = hyp_scores[:, cut_start:cut_end]
+        one_hot_seqs = one_hot_seqs[:, cut_start:cut_end]
+   
+    act_scores = hyp_scores * one_hot_seqs
+    
+    track_set = modisco.tfmodisco_workflow.workflow.prep_track_set(
+        task_names=["task0"],
+        contrib_scores={"task0": act_scores},
+        hypothetical_contribs={"task0": hyp_scores},
+        one_hot=one_hot_seqs
+    )
+    
+    with h5py.File(tfm_results_path,"r") as f:
+        return modisco.tfmodisco_workflow.workflow.TfModiscoResults.from_hdf5(f, track_set=track_set)
+
+
 @click.command()
 @click.argument("shap_scores_hdf5", nargs=1)
 @click.option(

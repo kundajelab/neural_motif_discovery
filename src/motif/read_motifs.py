@@ -23,6 +23,15 @@ def pfm_info_content(pfm, pseudocount=0.001):
     return np.sum(ic, axis=1)
 
 
+def pfm_to_pwm(pfm):
+    """
+    Converts an L x 4 PFM into a PWM by weighting each base by information
+    content.
+    """
+    ic = pfm_info_content(pfm)
+    return pfm * np.expand_dims(ic, axis=1)
+
+
 def dinuc_to_mononuc_pfm(dinuc_dict):
     """
     From a dictionary of dinucleotide counts at each position, constructs
