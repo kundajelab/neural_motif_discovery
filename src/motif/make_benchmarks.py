@@ -4,7 +4,7 @@ import click
 import json
 import pandas as pd
 
-MOTIF_BENCH_SRC_DIR = "/users/amtseng/tfmodisco/src/motif_bench/"
+MOTIF_SRC_DIR = "/users/amtseng/tfmodisco/src/motif/"
 
 def extract_peak_intervals(peak_bed_paths, save_path, peak_limit=None):
     """
@@ -30,7 +30,7 @@ def extract_peak_intervals(peak_bed_paths, save_path, peak_limit=None):
     peaks = peaks.sort_values(by="signal", ascending=False)
     peaks = peaks.drop_duplicates(["chrom", "peak_start", "peak_end"])
 
-    if peak_limit:
+    if peak_limit > 0:
         peaks = peaks.head(peak_limit)
 
     peaks.to_csv(save_path, sep="\t", header=False, index=False)
@@ -46,7 +46,7 @@ def bed_to_fasta(bed_path, fasta_path, reference_fasta, peak_center_size=0):
         `peak_center_size`: if specified, cut off peaks to be this size,
             centered around the summit
     """
-    comm = ["python", os.path.join(MOTIF_BENCH_SRC_DIR, "bed_to_fasta.py")]
+    comm = ["python", os.path.join(MOTIF_SRC_DIR, "bed_to_fasta.py")]
     comm += ["-r", reference_fasta]
     comm += ["-l", str(peak_center_size)]
     comm += [bed_path, fasta_path]
@@ -65,13 +65,13 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
     results_dir = os.path.join(out_dir, benchmark_type)
     comm = ["bash"]
     if benchmark_type == "meme":
-        comm += [os.path.join(MOTIF_BENCH_SRC_DIR, "run_meme.sh")]
+        comm += [os.path.join(MOTIF_SRC_DIR, "run_meme.sh")]
     elif benchmark_type == "memechip":
-        comm += [os.path.join(MOTIF_BENCH_SRC_DIR, "run_memechip.sh")]
+        comm += [os.path.join(MOTIF_SRC_DIR, "run_memechip.sh")]
     elif benchmark_type == "homer":
-        comm += [os.path.join(MOTIF_BENCH_SRC_DIR, "run_homer.sh")]
+        comm += [os.path.join(MOTIF_SRC_DIR, "run_homer.sh")]
     elif benchmark_type == "dichipmunk":
-        comm += [os.path.join(MOTIF_BENCH_SRC_DIR, "run_dichipmunk.sh")]
+        comm += [os.path.join(MOTIF_SRC_DIR, "run_dichipmunk.sh")]
     else:
         return
     
@@ -82,31 +82,32 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
 
 @click.command()
 @click.option(
-    "-o", "--out-dir", required=True, help="Path to benchmark output directory"
+    "-o", "--out-dir", required=True,
+    help="Path to benchmark output directory; each type of benchmark will have its own subdirectory"
+)
+@click.option(
+    "-t", "--input-type", required=True, type=click.Choice(["peaks", "seqlets"]),
+    help="Whether the input is a peaks BED file or an input Fasta of seqlets"
 )
 @click.option(
     "-f", "--files-spec-path", default=None,
-    help="Path to TF's file specifications JSON; required for peak sources"
+    help="Path to TF's file specifications JSON; required for peak source"
 )
 @click.option(
-    "-i", "--task-index", default=None,
-    help="Index of task to run; defaults to all tasks"
+    "-i", "--task-index", default=None, type=int,
+    help="Index of task to run; defaults to all tasks; used only for peak source"
 )
 @click.option(
     "-q", "--seqlets-path", default=None,
-    help="Path to seqlets; required for seqlet sources"
+    help="Path to seqlets; required for seqlet source"
 )
 @click.option(
-    "-b", "--benchmark-types", default="meme,memechip,homer,dichipmunk",
-    help="Comma-separated list of benchmarks to run; defaults to all"
-)
-@click.option(
-    "-s", "--sources", default="peaks,seqlets",
-    help="Comma-separated list of sources (i.e. peaks, seqlets); defaults to both"
+    "-b", "--benchmark-types", default="meme,homer,dichipmunk",
+    help="Comma-separated list of benchmarks to run; defaults to MEME, HOMER, and DiChIPMunk"
 )
 @click.option(
     "-l", "--peak-limit", default=1000, type=int,
-    help="Maximum number of peaks to use; set to 0 for unlimited"
+    help="Maximum number of peaks to use based on signal strength; set to 0 or negative for unlimited"
 )
 @click.option(
     "-c", "--peak-center-size", default=200,
@@ -117,47 +118,42 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
     help="Path to reference genome Fasta; defaults to /users/amtseng/genomes/hg38.fasta"
 )
 def main(
-    out_dir, files_spec_path, task_index, seqlets_path, benchmark_types,
-    sources, peak_limit, peak_center_size, reference_fasta
+    out_dir, input_type, files_spec_path, task_index, seqlets_path,
+    benchmark_types, peak_limit, peak_center_size, reference_fasta
 ):
     """
     Runs motif benchmarks (i.e. MEME, MEME-ChIP, HOMER, and/or DiChIPMunk) on a
     TF's peaks and/or TF-MoDISco-identified seqlets
     """
     benchmark_types = list(set(benchmark_types.split(","))) 
-    sources = list(set(sources.split(","))) 
 
-    for source in sources:
-        assert source in ("peaks", "seqlets")
     for benchmark_type in benchmark_types:
         assert benchmark_type in ("meme", "memechip", "homer", "dichipmunk")
 
     os.makedirs(out_dir, exist_ok=True)
 
-    for source in sorted(sources):
-        print("Source: " + source)
-        if source == "peaks":
-            # Create the peaks Fasta, perhaps limited
-            peaks_name = "peaks" if task_index is None \
-                else "peaks_task%d" % int(task_index)
-            bed_path = os.path.join(out_dir, peaks_name + ".bed")
-            fasta_path = os.path.join(out_dir, peaks_name + ".fasta")
-            with open(files_spec_path, "r") as f:
-                specs = json.load(f)
-                peak_bed_paths = specs["peak_beds"]
-            extract_peak_intervals(peak_bed_paths, bed_path, peak_limit)
-            bed_to_fasta(
-                bed_path, fasta_path, reference_fasta, peak_center_size
-            )
-        else:
-            # The unadulterated seqlets Fasta
-            fasta_path = seqlets_path
+    if input_type == "peaks":
+        # Create the peaks Fasta, perhaps limited
+        peaks_name = "peaks" if task_index is None \
+            else "peaks_task%d" % int(task_index)
+        bed_path = os.path.join(out_dir, peaks_name + ".bed")
+        fasta_path = os.path.join(out_dir, peaks_name + ".fasta")
+        with open(files_spec_path, "r") as f:
+            specs = json.load(f)
+            peak_bed_paths = specs["peak_beds"]
+            if task_index is not None:
+                peak_bed_paths = [peak_bed_paths[task_index]]
+        extract_peak_intervals(peak_bed_paths, bed_path, peak_limit)
+        bed_to_fasta(
+            bed_path, fasta_path, reference_fasta, peak_center_size
+        )
+    else:
+        # The unadulterated seqlets Fasta
+        fasta_path = seqlets_path
 
-        for benchmark_type in sorted(benchmark_types):
-            print("Running " + benchmark_type.upper())
-            run_benchmark(
-                fasta_path, os.path.join(out_dir, source), benchmark_type
-            )
+    for benchmark_type in sorted(benchmark_types):
+        print("Running " + benchmark_type.upper())
+        run_benchmark(fasta_path, out_dir, benchmark_type)
 
 if __name__ == "__main__":
     main()
