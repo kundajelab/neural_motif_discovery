@@ -24,26 +24,13 @@ def import_model(model_path):
     return keras.models.load_model(model_path, custom_objects=custom_objects)
 
 
-def compute_embeddings(
-    model, files_spec_path, coords, input_length, reference_fasta,
-    batch_size=128
-):
+def create_embedding_model(model):
     """
-    From an imported model, computes the set of embeddings as the set of all
-    dilated convolutional layer outputs, for a set of specified coordinates.
-    activations for a set of specified coordinates
-    Arguments:
-        `model`: imported `profile_tf_binding_predictor` model
-        `files_spec_path`: path to the JSON files spec for the model
-        `coords`: an M x 3 array of what coords to run this for
-        `input_length`: length of input sequence
-        `reference_fasta`: path to reference FASTA
-        `batch_size`: batch size for computation
-    Returns an M x C x L x F arrays. C is the number of layers (and the array is
-    in order of layers from earliest to latest in the model), L is the length of
-    the layer outputs, and F is the number of filters. Note that although the
-    length of each convolutional layer output is rather long, everything is cut
-    to the size of the last output after the cropping step (this is L).
+    From an imported model, creates another model that takes in the B x I x 4
+    input DNA sequences an outputs a B x C x L x F array of embeddings. C is the
+    number of layers (and the array is in order of layers from earliest to
+    latest in the model), L is the length of the layer outputs, and F is the
+    number of filters. Returns the new embedding model.
     """
     # Get the dilated convolutional layers in the original model
     dilated_layers = [
@@ -59,35 +46,12 @@ def compute_embeddings(
     final_output = keras.layers.Lambda(
         lambda x: keras.backend.stack(x, axis=1)
     )(cropped_outputs)
-    embedding_model = keras.models.Model(seq_input, final_output)
+    return keras.models.Model(seq_input, final_output)
 
-    _, num_layers, output_length, num_filters = \
-        keras.backend.int_shape(final_output)
 
-    # Create data loader
-    input_func = data_loading.get_input_func(
-        files_spec_path, input_length, 0, reference_fasta
-        # Set profile length to 0 (we don't need the profiles)
-    )
-
-    # Run all data through the embedding model, which returns embeddings
-    all_embeddings = np.empty(
-        (len(coords), num_layers, output_length, num_filters)
-    )
-    num_batches = int(np.ceil(len(coords) / batch_size))
-    for i in tqdm.trange(num_batches):
-        batch_slice = slice(i * batch_size, (i + 1) * batch_size)
-        batch = coords[batch_slice]
-        input_seqs = input_func(batch)[0]
-
-        embeddings = embedding_model.predict_on_batch(input_seqs)
-        all_embeddings[batch_slice] = embeddings
-    return all_embeddings
- 
-
-def compute_embedding_views(
+def compute_embeddings(
     model_path, files_spec_path, out_hdf5_path, input_length, reference_fasta,
-    task_inds=None, chrom_set=None
+    task_inds=None, chrom_set=None, batch_size=128
 ):
     """
     For the model at the given model path, for all peaks over all chromosomes,
@@ -105,6 +69,7 @@ def compute_embedding_views(
             specified by `files_spec_path`; by default uses all tasks
         `chrom_set`: if provided, the set of chromosomes to compute embeddings
             for
+        `batch_size`: batch size to use for computation
     Results will be saved in the specified HDF5, under the following keys:
         `coords`: contains coordinates used to compute embeddings
             `coords_chrom`: M-array of chromosome (string)
@@ -122,13 +87,21 @@ def compute_embedding_views(
     os.makedirs(os.path.dirname(out_hdf5_path), exist_ok=True)
     h5_file = h5py.File(out_hdf5_path, "w")
 
-    print("Importing model...")
+    # Import original model
     model = import_model(model_path)
+
+    # Create embedding model
+    emb_model = create_embedding_model(model)
+    _, num_layers, emb_length, num_filters = keras.backend.int_shape(
+        emb_model.output
+    )
 
     # Get coordinates 
     coords = data_loading.get_positive_inputs(
         files_spec_path, chrom_set=chrom_set, task_indices=task_inds
     )
+    coords[:, 1] = coords[:, 1] - (input_length // 2)
+    coords[:, 2] = coords[:, 1] + input_length
 
     coord_group = h5_file.create_group("coords")
     coord_group.create_dataset(
@@ -140,26 +113,39 @@ def compute_embedding_views(
     coord_group.create_dataset(
         "coords_end", data=coords[:, 2].astype(int), compression="gzip"
     )
+    num_coords = len(coords)
+    view_shape = (num_coords, num_layers, num_filters)
+
+    # Create datasets for the embedding views
+    emb_group = h5_file.create_group("embeddings")
+    mean_emb = emb_group.create_dataset("mean", view_shape, compression="gzip")
+    std_emb = emb_group.create_dataset("std", view_shape, compression="gzip")
+    max_emb = emb_group.create_dataset("max", view_shape, compression="gzip")
+    min_emb = emb_group.create_dataset("min", view_shape, compression="gzip")
+   
+    # Create data loader
+    input_func = data_loading.get_input_func(
+        files_spec_path, input_length, 0, reference_fasta
+        # Set profile length to 0 (we don't need the profiles)
+    )
 
     print("Computing embeddings...")
-    embeddings = compute_embeddings(
-        model, files_spec_path, coords, input_length, reference_fasta
+    # Run all data through the embedding model, which returns embeddings
+    all_embeddings = np.empty(
+        (num_coords, num_layers, emb_length, num_filters)
     )
+    num_batches = int(np.ceil(num_coords / batch_size))
+    for i in tqdm.trange(num_batches):
+        batch_slice = slice(i * batch_size, (i + 1) * batch_size)
+        batch = coords[batch_slice]
+        input_seqs = input_func(batch)[0]
 
-    # Collapse and save
-    emb_group = h5_file.create_group("embeddings")
-    emb_group.create_dataset(
-        "mean", data=np.mean(embeddings, axis=2), compression="gzip"
-    )
-    emb_group.create_dataset(
-        "std", data=np.std(embeddings, axis=2), compression="gzip"
-    )
-    emb_group.create_dataset(
-        "max", data=np.max(embeddings, axis=2), compression="gzip"
-    )
-    emb_group.create_dataset(
-        "min", data=np.min(embeddings, axis=2), compression="gzip"
-    )
+        embeddings = emb_model.predict_on_batch(input_seqs)
+
+        mean_emb[batch_slice] = np.mean(embeddings, axis=2)
+        std_emb[batch_slice] = np.std(embeddings, axis=2)
+        max_emb[batch_slice] = np.max(embeddings, axis=2)
+        min_emb[batch_slice] = np.min(embeddings, axis=2)
 
     h5_file.close()
 
@@ -215,7 +201,7 @@ def main(
         with open(chrom_sizes, "r") as f:
             chrom_set = [line.split("\t")[0] for line in f]
 
-    compute_embedding_views(
+    compute_embeddings(
         model_path, files_spec_path, outfile, input_length, reference_fasta,
         task_inds=task_inds, chrom_set=chrom_set
     )
