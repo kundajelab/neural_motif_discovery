@@ -385,6 +385,10 @@ def train_model(
         val_epoch_loss_hist = []
 
     for epoch in range(num_epochs):
+        # Do anything that needs to be done before the epoch
+        train_enq.sequence.coords_batcher.on_epoch_start()
+        val_enq.sequence.coords_batcher.on_epoch_start()
+
         # Start the enqueuers and get the generators
         train_enq.start(num_workers, num_workers * 2)
         train_num_batches = len(train_enq.sequence)
@@ -471,6 +475,7 @@ def train_model(
     ]:
         model.set_weights(best_model_weights)
         print("Computing test metrics, %s:" % prefix)
+        data_enq.sequence.coords_batcher.on_epoch_start()
         data_enq.start(num_workers, num_workers * 2)
         data_gen = data_enq.get()
         data_num_batches = len(data_enq.sequence)
