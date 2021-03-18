@@ -26,6 +26,6 @@ spec:
         args:
         - gsutil cp gs://gbsc-gcp-lab-kundaje-user-amtseng/run_hyperparam.py ~;
           cd ~;
-          MODEL_DIR={modeldir} python run_hyperparam.py -t profile -f /users/amtseng/tfmodisco/data/processed/ENCODE/config/{tf}/{tf}_training_paths.json -c /users/amtseng/tfmodisco/data/processed/ENCODE/config/{tf}/{tf}_hypertune_task{task}.json -s /users/amtseng/tfmodisco/data/processed/ENCODE/chrom_splits.json -k {foldnum} -n 1 {taskarg};
+          MODEL_DIR={modeldir} python run_hyperparam.py -t profile -f /users/amtseng/tfmodisco/data/processed/ENCODE/config/{tf}/{tf}_training_paths.json -c /users/amtseng/tfmodisco/data/processed/ENCODE/config/{tf}/{tf}_hypertune_task{task}.json -s /users/amtseng/tfmodisco/data/processed/ENCODE/chrom_splits.json -k {foldnum} -n 1 {taskarg} train.num_epochs=15;
       restartPolicy: Never
   backoffLimit: 0

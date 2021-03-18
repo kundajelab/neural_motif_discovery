@@ -3,6 +3,8 @@ kind: Job
 metadata:
   name: run-hypertune-{tflower}-task{task}
 spec:
+  completions: 20
+  parallelism: 20
   template:
     spec:
       containers:
@@ -24,6 +26,6 @@ spec:
         args:
         - gsutil cp gs://gbsc-gcp-lab-kundaje-user-amtseng/run_hyperparam.py ~;
           cd ~;
-          MODEL_DIR={modeldir} python run_hyperparam.py -t profile -f /users/amtseng/tfmodisco/data/processed/ENCODE/config/{tf}/{tf}_training_paths.json -c /users/amtseng/tfmodisco/data/processed/ENCODE/config/{tf}/{tf}_config.json -p /users/amtseng/tfmodisco/data/processed/ENCODE/hyperparam_specs/counts_loss_learn_rate.json -s /users/amtseng/tfmodisco/data/processed/ENCODE/chrom_splits.json -k {foldnum} -n 20 {taskarg};
+          MODEL_DIR={modeldir} python run_hyperparam.py -t profile -f /users/amtseng/tfmodisco/data/processed/ENCODE/config/{tf}/{tf}_training_paths.json -c /users/amtseng/tfmodisco/data/processed/ENCODE/config/{tf}/{tf}_config.json -p /users/amtseng/tfmodisco/data/processed/ENCODE/hyperparam_specs/counts_loss_learn_rate.json -s /users/amtseng/tfmodisco/data/processed/ENCODE/chrom_splits.json -k {foldnum} -n 1 {taskarg} train.num_epochs=5;
       restartPolicy: Never
   backoffLimit: 0
