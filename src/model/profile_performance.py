@@ -15,7 +15,9 @@ def config():
     prof_smooth_kernel_width = 81
 
 
-def multinomial_log_probs(category_log_probs, trials, query_counts):
+def multinomial_log_probs(
+    category_log_probs, trials, query_counts, return_cross_entropy=True
+):
     """
     Defines multinomial distributions and computes the probability of seeing
     the queried counts under these distributions. This defines D different
@@ -29,6 +31,8 @@ def multinomial_log_probs(category_log_probs, trials, query_counts):
         `query_counts`: a D x N array containing the observed count of each
             category in each distribution; the probability is computed for these
             observations
+        `return_cross_entropy`: if True, also return a D-array of the cross
+            entropy
     Returns a D-array containing the log probabilities (base e) of each observed
     query with its corresponding distribution. Note that D can be replaced with
     any shape (i.e. only the last dimension is reduced).
@@ -41,12 +45,18 @@ def multinomial_log_probs(category_log_probs, trials, query_counts):
     log_prob_pows = category_log_probs * query_counts  # Elementwise
     log_prob_pows_sum = np.sum(log_prob_pows, axis=-1)
 
-    return log_n_fact - log_counts_fact_sum + log_prob_pows_sum
+    log_prob = log_n_fact - log_counts_fact_sum + log_prob_pows_sum
+    if return_cross_entropy:
+        cross_ent = (-log_prob_pows_sum) / trials
+        return log_prob, cross_ent
+    else:
+        return log_prob
 
 
 def profile_multinomial_nll(
     true_profs, log_pred_profs, true_counts, prof_smooth_kernel_sigma,
-    prof_smooth_kernel_width, smooth_pred_profs=False, batch_size=200
+    prof_smooth_kernel_width, smooth_pred_profs=False,
+    return_cross_entropy=True, batch_size=200
 ):
     """
     Computes the negative log likelihood of seeing the true profile, given the
@@ -64,6 +74,8 @@ def profile_multinomial_nll(
             for each task and strand
         `smooth_pred_profs`: whether or not to smooth the predicted profiles
             before computing NLL
+        `return_cross_entropy`: if True, also return an N x T array of the
+            cross entropy
         `batch_size`: performs computation in a batch size of this many samples
     Returns an N x T array, containing the strand-pooled multinomial NLL for
     each sample and task.
@@ -71,6 +83,8 @@ def profile_multinomial_nll(
     num_samples = true_profs.shape[0]
     num_tasks = true_profs.shape[1]
     nlls = np.empty((num_samples, num_tasks))
+    if return_cross_entropy:
+        ces = np.empty((num_samples, num_tasks))
 
     for start in range(0, num_samples, batch_size):
         end = start + batch_size
@@ -99,11 +113,21 @@ def profile_multinomial_nll(
             # Transform back to log-probability space
             log_pred_profs_batch = np.log(pred_profs_batch_smooth)
 
-        nll_batch = -multinomial_log_probs(
-            log_pred_profs_batch, true_counts_batch, true_profs_batch
+        result_batch = multinomial_log_probs(
+            log_pred_profs_batch, true_counts_batch, true_profs_batch,
+            return_cross_entropy
         )
-        nll_batch_mean = np.mean(nll_batch, axis=2)  # Shape: B x T
+        if return_cross_entropy:
+            nll_batch, ce_batch = result_batch
+            ce_batch_mean = np.mean(ce_batch, axis=2)
+            ces[start:end] = ce_batch_mean
+        else:
+            nll_batch = result_batch
+        nll_batch_mean = np.mean(-nll_batch, axis=2)  # Shape: B x T
         nlls[start:end] = nll_batch_mean
+
+    if return_cross_entropy:
+        return nlls, ces
     return nlls
 
 
@@ -371,10 +395,10 @@ def count_corr_mse(log_true_total_counts, log_pred_total_counts):
     Arguments:
         `log_true_total_counts`: a N x T x 2 array, containing the true total
             LOG COUNTS for each task and strand
-        `log_pred_prof_counts`: a N x T x 2 array, containing the predicted
+        `log_pred_total_counts`: a N x T x 2 array, containing the predicted
             total LOG COUNTS for each task and strand
     Returns 3 T-arrays, containing the Pearson correlation, Spearman
-    correlation, and mean squared error of the profile predictions (as log
+    correlation, and mean squared error of the total count predictions (as log
     counts). Correlations/MSE are computed for each task, over the samples and
     strands.
     """
@@ -418,13 +442,16 @@ def compute_performance_metrics(
             JSD and correlations; true profiles will not be smoothed for any
             other metric
         `smooth_pred_profs`: if True, smooth the predicted profiles before
-            computing NLL, JSD, and correlations; predicted profiles will not be
-            smoothed for any other metric
+            computing NLL, cross entropy, JSD, and correlations; predicted
+            profiles will not be smoothed for any other metric
         `print_updates`: if True, print out updates and runtimes
     Returns a dictionary with the following:
         A N x T-array of the average negative log likelihoods for the profiles
             (given predicted probabilities, the likelihood for the true counts),
             for each sample/task (strands averaged)
+        A N x T-array of the average cross entropy for the profiles (given
+            predicted probabilities, the likelihood for the true counts), for
+            each sample/task (strands averaged)
         A N x T array of average Jensen-Shannon divergence between the predicted
             and true profiles (strands averaged)
         A N x T array of the Pearson correlation of the predicted and true (log)
@@ -442,11 +469,15 @@ def compute_performance_metrics(
     """
     # Multinomial NLL
     if print_updates:
-        print("\t\tComputing profile NLL... ", end="", flush=True)
+        print(
+            "\t\tComputing profile NLL and cross entropy... ", end="",
+            flush=True
+        )
         start = datetime.now()
-    nll = profile_multinomial_nll(
+    nll, ce = profile_multinomial_nll(
         true_profs, log_pred_profs, true_counts, prof_smooth_kernel_sigma,
-        prof_smooth_kernel_width, smooth_pred_profs=smooth_pred_profs
+        prof_smooth_kernel_width, smooth_pred_profs=smooth_pred_profs,
+        return_cross_entropy=True
     )
     if print_updates:
         end = datetime.now()
@@ -499,6 +530,7 @@ def compute_performance_metrics(
 
     return {
         "nll": nll,
+        "cross_ent": ce,
         "jsd": jsd,
         "profile_pearson": prof_pears,
         "profile_spearman": prof_spear,
@@ -519,6 +551,7 @@ def log_performance_metrics(metrics, prefix, _run, print_log=True):
     # Before logging, condense the metrics into averages over the samples (when
     # appropriate)
     nll = np.nanmean(metrics["nll"], axis=0)  # T
+    ce = np.nanmean(metrics["cross_ent"], axis=0)  # T
     jsd = np.nanmean(metrics["jsd"], axis=0)  # T
     prof_pears = np.nanmean(metrics["profile_pearson"], axis=0)  # T
     prof_spear = np.nanmean(metrics["profile_spearman"], axis=0)  # T
@@ -530,6 +563,7 @@ def log_performance_metrics(metrics, prefix, _run, print_log=True):
     # T-arrays (where T is the number of tasks)
 
     _run.log_scalar("%s_prof_nll" % prefix, list(nll))
+    _run.log_scalar("%s_prof_crossent" % prefix, list(nll))
     _run.log_scalar("%s_prof_jsd" % prefix, list(jsd))
     _run.log_scalar("%s_prof_pearson" % prefix, list(prof_pears))
     _run.log_scalar("%s_prof_spearman" % prefix, list(prof_spear))
@@ -541,6 +575,9 @@ def log_performance_metrics(metrics, prefix, _run, print_log=True):
     if print_log:
         print(("\t%s profile NLL: " % prefix) + ", ".join(
             [("%6.6f" % x) for x in nll]
+        ))
+        print(("\t%s profile cross entropy: " % prefix) + ", ".join(
+            [("%6.6f" % x) for x in ce]
         ))
         print(("\t%s profile JSD: " % prefix) + ", ".join(
             [("%6.6f" % x) for x in jsd]

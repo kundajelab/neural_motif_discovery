@@ -1,6 +1,7 @@
 import numpy as np
 import sklearn.metrics
 import scipy.stats
+import scipy.special
 import scipy.spatial.distance
 import tensorflow as tf
 import model.profile_performance as profile_performance
@@ -13,6 +14,7 @@ test_ex = sacred.Experiment("test", ingredients=[
     profile_performance.performance_ex
 ])
 
+@test_ex.capture
 def test_vectorized_multinomial_nll():
     np.random.seed(20191110)
     batch_size, num_tasks, prof_len = 500, 5, 1000
@@ -28,7 +30,9 @@ def test_vectorized_multinomial_nll():
     a = datetime.now()
     # Using the profile performance function:
     nll_vec_np = profile_performance.profile_multinomial_nll(
-        true_profs_np, log_pred_profs_np, true_counts_np
+        true_profs_np, log_pred_profs_np, true_counts_np,
+        prof_smooth_kernel_sigma=0, prof_smooth_kernel_width=0,
+        return_cross_entropy=False
     )
     b = datetime.now()
     print("\tTime to compute (NumPy vectorization): %ds" % (b - a).seconds)
@@ -84,6 +88,50 @@ def test_vectorized_multinomial_nll():
 
     assert np.allclose(nll_vec_np, nll_vec_tf) and \
         np.allclose(nll_vec_tf, nll_tf)
+
+
+@test_ex.capture
+def test_vectorized_cross_entropy():
+    np.random.seed(20191110)
+    batch_size, num_tasks, prof_len = 500, 5, 1000
+    prof_shape = (batch_size, num_tasks, prof_len, 2)
+    true_profs_np = np.random.randint(5, size=prof_shape)
+    logit_pred_profs_np = np.random.randn(*prof_shape)
+    log_pred_profs_np = profile_models.profile_logits_to_log_probs(
+        logit_pred_profs_np, axis=2
+    )
+    true_counts_np = np.sum(true_profs_np, axis=2)
+
+    print("Testing cross entropy...")
+    
+    # Using SciPy:
+    a = datetime.now()
+    ce_scipy = np.empty((batch_size, num_tasks))
+    for i in range(batch_size):
+        for j in range(num_tasks):
+            p_0 = true_profs_np[i, j, :, 0] / true_counts_np[i, j, 0]
+            q_0 = np.exp(log_pred_profs_np[i, j, :, 0])
+            p_1 = true_profs_np[i, j, :, 1] / true_counts_np[i, j, 1]
+            q_1 = np.exp(log_pred_profs_np[i, j, :, 1])
+
+            ce_0 = scipy.stats.entropy(p_0) + np.sum(scipy.special.rel_entr(p_0, q_0))
+            ce_1 = scipy.stats.entropy(p_1) + np.sum(scipy.special.kl_div(p_1, q_1))
+
+            ce_scipy[i, j] = np.mean([ce_0, ce_1])
+    b = datetime.now()
+    print("\tTime to compute (SciPy): %ds" % (b - a).seconds)
+    
+    # Using the profile performance function:
+    a = datetime.now()
+    _, ce_vec = profile_performance.profile_multinomial_nll(
+        true_profs_np, log_pred_profs_np, true_counts_np,
+        prof_smooth_kernel_sigma=0, prof_smooth_kernel_width=0,
+        return_cross_entropy=True
+    )
+    b = datetime.now()
+    print("\tTime to compute (vectorized): %ds" % (b - a).seconds)
+
+    assert np.allclose(ce_vec, ce_scipy)
 
 
 def test_vectorized_jsd():
@@ -322,6 +370,7 @@ def test_all_metrics():
 @test_ex.automain
 def main():
     test_vectorized_multinomial_nll()
+    test_vectorized_cross_entropy()
     test_vectorized_jsd()
     test_vectorized_corr_mse_1()
     test_vectorized_corr_mse_2()
