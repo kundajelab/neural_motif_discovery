@@ -106,34 +106,6 @@ def profs_to_log_prob_profs(profiles, pseudocount=0.0001, batch_size=1000):
     return log_probs
 
 
-def compute_cross_entropy_from_nll(nlls, profiles, batch_size=1000):
-    """
-    Computes the cross entropy of the profiles from the log probability portion
-    of the NLL by adding back log(N!/x1!...xk!) and dividing by the true counts.
-    Arguments:
-        `nlls`: An N x T array of NLLs (strands averaged)
-        `profiles`: An N x T x O x 2 corresponding array of true profile counts
-            (that were used to compute the NLLs)
-    Returns an N x T array of cross entropy values.
-    """
-    cross_ents = np.empty_like(nlls)
-    num_batches = int(np.ceil(len(nlls) / batch_size))
-    for i in range(num_batches):
-        batch_slice = slice(i * batch_size, (i + 1) * batch_size)
-        nll_slice = nlls[batch_slice]
-        prof_slice = profiles[batch_slice]
-
-        counts = np.sum(prof_slice, axis=2)
-        log_n_fact = scipy.special.gammaln(counts + 1)
-        log_x_fact = scipy.special.gammaln(prof_slice+ 1)
-        log_x_fact_sum = np.sum(log_x_fact, axis=2)
-        diff = np.mean(log_n_fact + log_x_fact_sum, axis=2)  # Shape: N x T
-
-        log_probs = nll_slice + diff
-        cross_ents[batch_slice] = log_probs / np.mean(counts, axis=2)
-    return cross_ents
-
-
 @bound_perf_ex.capture
 def compute_performance_bounds(
     files_spec_path, chrom_set, out_hdf5, batch_size=1000
@@ -156,9 +128,6 @@ def compute_performance_bounds(
             The predicted counts are the true counts shuffled randomly.
         Upper bound:
             The predicted/true counts are from pseudoreplicates.
-        We also include a new metric, `cross_ent`, which is the cross entropy
-        between two profiles. It is equal to the NLL without the N!/x1!...xk!
-        term, normalized by total counts.
     Arguments:
         `files_spec_path`: path to file specifications JSON
         `chrom_set`: if given, limit the coordinates to these chromosomes; by
@@ -172,14 +141,10 @@ def compute_performance_bounds(
             `coords_start`: N-array
             `coords_end`: N-array
         `performance_lower`:
-            Keys and values defined in `profile_performance.py`, as well as
-            `cross_ent`
+            Keys and values defined in `profile_performance.py`
         `performance_upper`:
-            Keys and values defined in `profile_performance.py`, as well as
-            `cross_ent`
         `profile_performance_av`:
-            Keys and values defined in `profile_performance.py`, as well as
-            `cross_ent` (excluding all total counts metrics)
+            Keys and values defined in `profile_performance.py`
     """
     # Import all coordinates
     peak_coords = import_peak_coordinates(files_spec_path, chrom_set=chrom_set)
@@ -268,18 +233,12 @@ def compute_performance_bounds(
             smooth_pred_profs=True, print_updates=False
             # Technically, smoothing the uniform profiles here is unnecessary
         )
-        lower_perf_dict["cross_ent"] = compute_cross_entropy_from_nll(
-            lower_perf_dict["nll"], true_profs
-        )
         
         # Average profile performance
         avg_perf_dict = profile_performance.compute_performance_metrics(
             true_profs, avg_prof_log_probs,
             true_counts, np.ones_like(true_counts),  # Don't care about counts
             smooth_pred_profs=True, print_updates=False
-        )
-        avg_perf_dict["cross_ent"] = compute_cross_entropy_from_nll(
-            avg_perf_dict["nll"], true_profs
         )
     
         # Upper bound
@@ -288,9 +247,6 @@ def compute_performance_bounds(
             true_counts, np.ones_like(true_counts),  # Don't care about counts
             smooth_true_profs=False, smooth_pred_profs=False,
             print_updates=False
-        )
-        upper_perf_dict["cross_ent"] = compute_cross_entropy_from_nll(
-            upper_perf_dict["nll"], true_profs 
         )
         # Remove non-profile metrics
         for d in (lower_perf_dict, avg_perf_dict, upper_perf_dict):

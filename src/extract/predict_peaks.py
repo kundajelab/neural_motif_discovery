@@ -137,6 +137,10 @@ def predict_peaks(
     nll_dset = perf_group.create_dataset(
         "nll", (num_examples, len(task_inds)), dtype=float, compression="gzip"
     )
+    ce_dset = perf_group.create_dataset(
+        "cross_ent", (num_examples, len(task_inds)), dtype=float,
+        compression="gzip"
+    )
     jsd_dset = perf_group.create_dataset(
         "jsd", (num_examples, len(task_inds)), dtype=float, compression="gzip"
     )
@@ -212,6 +216,7 @@ def predict_peaks(
         true_profs_dset[batch_slice] = true_profs
         true_counts_dset[batch_slice] = true_counts
         nll_dset[batch_slice] = perf_dict["nll"]
+        ce_dset[batch_slice] = perf_dict["cross_ent"]
         jsd_dset[batch_slice] = perf_dict["jsd"]
         profile_pearson_dset[batch_slice] = perf_dict["profile_pearson"]
         profile_spearman_dset[batch_slice] = perf_dict["profile_spearman"]
