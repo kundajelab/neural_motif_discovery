@@ -214,6 +214,8 @@ def test_vectorized_corr_mse_2():
     arr2 = np.random.randint(100, size=(num_samples, num_tasks, profile_len, 2))
     arr3 = np.random.randint(100, size=(num_samples, num_tasks, 2))
     arr4 = np.random.randint(100, size=(num_samples, num_tasks, 2))
+    arr1 = arr1 / np.sum(arr1, axis=2, keepdims=True)
+    arr2 = arr2 / np.sum(arr2, axis=2, keepdims=True)
 
     print("Testing profile correlation and MSE...")
     a = datetime.now()

@@ -2,6 +2,7 @@ import numpy as np
 import scipy.special
 import scipy.ndimage
 import sacred
+import h5py
 from datetime import datetime
 
 performance_ex = sacred.Experiment("performance")
@@ -181,15 +182,16 @@ def profile_jsd(
     Computes the Jensen-Shannon divergence of the true and predicted profiles
     given their raw probabilities or counts. The inputs will be renormalized
     prior to JSD computation, so providing either raw probabilities or counts
-    is sufficient.
+    is sufficient. If any entries are negative, the arrays are assumed to be
+    log probabilities and are exponentiated.
     Arguments:
         `true_prof_probs`: N x T x O x 2 array, where N is the number of
             examples, T is the number of tasks, O is the output profile length;
             contains the true profiles for each task and strand, as RAW
-            PROBABILITIES or RAW COUNTS
+            PROBABILITIES, LOG PROBABILITIES, or RAW COUNTS
         `pred_prof_probs`: N x T x O x 2 array, containing the predicted
-            profiles for each task and strand, as RAW PROBABILITIES or RAW
-            COUNTS
+            profiles for each task and strand, as RAW PROBABILITIES, LOG
+            PROBABILITIES, or RAW COUNTS
         `smooth_true_profs`: whether or not to smooth the true profiles before
             computing JSD
         `smooth_pred_profs`: whether or not to smooth the predicted profiles
@@ -206,6 +208,12 @@ def profile_jsd(
         end = start + batch_size
         true_prof_probs_batch = true_prof_probs[start:end]
         pred_prof_probs_batch = pred_prof_probs[start:end]
+
+        # Turn into probabilities from log probabilities, if needed
+        if np.min(true_prof_probs_batch) < 0:
+            true_prof_probs_batch = np.exp(true_prof_probs_batch)
+        if np.min(pred_prof_probs_batch) < 0:
+            pred_prof_probs_batch = np.exp(pred_prof_probs_batch)
 
         # Transpose to B x T x 2 x O, as JSD is computed along last dimension
         true_prof_swap = np.swapaxes(true_prof_probs_batch, 2, 3)
@@ -334,13 +342,18 @@ def profile_corr_mse(
     batch_size=200
 ):
     """
-    Returns the correlations of the true and predicted PROFILE counts (i.e.
-    per base or per bin).
+    Returns the correlations of the true and predicted PROFILE count
+    probabilities (i.e. per base or per bin). If any of the entries are
+    negative, the array is assumed to be log probabilities, and will be
+    exponentiated. If counts are provided, normalization will happen.
     Arguments:
-        `true_prof_probs`: a N x T x O x 2 array, containing the true profile
-            RAW PROBABILITIES for each task and strand
-        `pred_prof_probs`: a N x T x O x 2 array, containing the true profile
-            RAW PROBABILITIES for each task and strand
+        true_prof_probs`: N x T x O x 2 array, where N is the number of
+            examples, T is the number of tasks, O is the output profile length;
+            contains the true profiles for each task and strand, as RAW
+            PROBABILITIES, LOG PROBABILITIES, or RAW COUNTS
+        `pred_prof_probs`: N x T x O x 2 array, containing the predicted
+            profiles for each task and strand, as RAW PROBABILITIES, LOG
+            PROBABILITIES, or RAW COUNTS
         `smooth_true_profs`: whether or not to smooth the true profiles before
             computing correlations/MSE
         `smooth_pred_profs`: whether or not to smooth the predicted profiles
@@ -366,6 +379,28 @@ def profile_corr_mse(
         end = start + batch_size
         true_batch = true_prof_probs[start:end]  # Shapes: B x T x O x 2
         pred_batch = pred_prof_probs[start:end]
+
+        # Turn into probabilities from log probabilities, if needed
+        if np.min(true_batch) < 0:
+            true_batch = np.exp(true_batch)
+        if np.min(pred_batch) < 0:
+            pred_batch = np.exp(pred_batch)
+
+        # Normalize into probabilities, if needed (keep 0 where all 0)
+        true_batch_sum = np.sum(true_batch, axis=2, keepdims=True)
+        if np.max(true_batch_sum) > 1.5:  # A little buffer
+            true_batch = np.divide(
+                true_batch, true_batch_sum,
+                out=np.zeros_like(true_batch, dtype=float),
+                where=(true_batch_sum != 0)
+            )
+        pred_batch_sum = np.sum(pred_batch, axis=2, keepdims=True)
+        if np.max(pred_batch_sum) > 1.5:
+            pred_batch = np.divide(
+                pred_batch, pred_batch_sum,
+                out=np.zeros_like(pred_batch, dtype=float),
+                where=(pred_batch_sum != 0)
+            )
 
         # Smooth along the output profile length
         if smooth_true_profs:
@@ -416,6 +451,24 @@ def count_corr_mse(log_true_total_counts, log_pred_total_counts):
     mse = mean_squared_error(log_true_total_counts, log_pred_total_counts)
 
     return pears, spear, mse
+
+
+@performance_ex.capture
+def compute_performance_metrics_from_file(
+    data_file_path, prof_smooth_kernel_sigma, prof_smooth_kernel_width,
+    smooth_true_profs=True, smooth_pred_profs=False, print_updates=True
+):
+    """
+    Wrapper around `compute_performance_metrics`, where the data is specified
+    as an HDF5 file.
+    """
+    with h5py.File(data_file_path, "r") as f:
+        return compute_performance_metrics(
+            f["true_profs"], f["log_pred_profs"], f["true_counts"][:],
+            f["log_pred_counts"][:], prof_smooth_kernel_sigma,
+            prof_smooth_kernel_width, smooth_true_profs, smooth_pred_profs,
+            print_updates=True
+        )
 
 
 @performance_ex.capture
@@ -488,9 +541,8 @@ def compute_performance_metrics(
     if print_updates:
         print("\t\tComputing profile JSD... ", end="", flush=True)
         start = datetime.now()
-    pred_prof_probs = np.exp(log_pred_profs)
     jsd = profile_jsd(
-        true_profs, pred_prof_probs, prof_smooth_kernel_sigma,
+        true_profs, log_pred_profs, prof_smooth_kernel_sigma,
         prof_smooth_kernel_width, smooth_true_profs=smooth_true_profs,
         smooth_pred_profs=smooth_pred_profs
     )
@@ -501,14 +553,9 @@ def compute_performance_metrics(
     if print_updates:
         print("\t\tComputing profile correlations/MSE... ", end="", flush=True)
         start = datetime.now()
-    # Binned profile count correlations/MSE
-    true_prof_sum = np.sum(true_profs, axis=2, keepdims=True)
-    true_prof_probs = np.divide(
-        true_profs, true_prof_sum, out=np.zeros_like(true_profs),
-        where=(true_prof_sum != 0)
-    )
+    # Profile probability correlations/MSE 
     prof_pears, prof_spear, prof_mse = profile_corr_mse(
-        true_prof_probs, pred_prof_probs, prof_smooth_kernel_sigma,
+        true_profs, log_pred_profs, prof_smooth_kernel_sigma,
         prof_smooth_kernel_width, smooth_true_profs=smooth_true_profs,
         smooth_pred_profs=smooth_pred_profs
     )

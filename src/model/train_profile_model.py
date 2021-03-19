@@ -3,6 +3,10 @@ import sacred
 import math
 import tqdm
 import os
+# This is needed, otherwise results that are saved into an HDF5 won't be able
+# to be opened by called scripts
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+import h5py
 import model.util as util
 import model.profile_models as profile_models
 import model.profile_performance as profile_performance
@@ -204,7 +208,7 @@ def load_model(model_path, model_num_tasks, profile_length):
 def run_epoch(
     data_gen, num_batches, mode, model, model_num_tasks, data_num_tasks,
     batch_size, revcomp, profile_length, batch_nan_limit, task_inds=None,
-    return_data=False
+    return_data=False, store_data_path=None
 ):
     """
     Runs the data from the data loader once through the model, to train,
@@ -227,27 +231,49 @@ def run_epoch(
         `return_data`: if specified, returns the following as NumPy arrays:
             true profile counts, predicted profile log probabilities,
             true total counts, predicted log counts
+        `store_data_path`: if given, stores the data (that would be returned by
+            `return_data` as an HDF5
     Returns a list of losses for the batches. If `return_data` is True, then
     more things will be returned after these.
     """
     assert mode in ("train", "eval")
+    assert not (return_data and store_data_path)
     if task_inds and model_num_tasks != data_num_tasks:
         assert len(task_inds) == model_num_tasks
 
     t_iter = tqdm.trange(num_batches, desc="\tLoss: ---")
     batch_losses = []
-    if return_data:
+    if return_data or store_data_path:
         # Allocate empty NumPy arrays to hold the results
         num_samples_exp = num_batches * batch_size
         num_samples_exp *= 2 if revcomp else 1
+        num_samples_seen = 0  # Real number of samples seen
         # Real number of samples can be smaller because of partial last batch
         profile_shape = (num_samples_exp, model_num_tasks, profile_length, 2)
         count_shape = (num_samples_exp, model_num_tasks, 2)
-        all_log_pred_profs = np.empty(profile_shape)
-        all_log_pred_counts = np.empty(count_shape)
-        all_true_profs = np.empty(profile_shape)
-        all_true_counts = np.empty(count_shape)
-        num_samples_seen = 0  # Real number of samples seen
+        if return_data:
+            all_log_pred_profs = np.empty(profile_shape)
+            all_log_pred_counts = np.empty(count_shape)
+            all_true_profs = np.empty(profile_shape)
+            all_true_counts = np.empty(count_shape)
+        else:
+            data_file = h5py.File(store_data_path, "w")
+            all_log_pred_profs = data_file.create_dataset(
+                "log_pred_profs", profile_shape, maxshape=profile_shape,
+                compression="gzip"
+            )
+            all_log_pred_counts = data_file.create_dataset(
+                "log_pred_counts", count_shape, maxshape=count_shape,
+                compression="gzip"
+            )
+            all_true_profs = data_file.create_dataset(
+                "true_profs", profile_shape, maxshape=profile_shape,
+                compression="gzip"
+            )
+            all_true_counts = data_file.create_dataset(
+                "true_counts", count_shape, maxshape=count_shape,
+                compression="gzip"
+            )
 
     for _ in t_iter:
         input_seqs, profiles, statuses = next(data_gen)
@@ -275,7 +301,7 @@ def run_epoch(
                 [input_seqs, cont_profs], [tf_profs, tf_counts]
             )
         batch_losses.append(losses[0])
-        
+
         if len(batch_losses) >= batch_nan_limit and np.all(
             np.isnan(batch_losses[-batch_nan_limit:])
         ):
@@ -284,7 +310,7 @@ def run_epoch(
 
         t_iter.set_description("\tLoss: %6.4f" % losses[0])
 
-        if return_data:
+        if return_data or store_data_path:
             logit_pred_profs, log_pred_counts = model.predict_on_batch(
                 [input_seqs, cont_profs]
             )
@@ -305,15 +331,24 @@ def run_epoch(
 
             num_samples_seen += num_in_batch
 
-    if return_data:
+    if return_data or store_data_path:
         # Truncate the saved data to the proper size, based on how many
         # samples actually seen
-        all_log_pred_profs = all_log_pred_profs[:num_samples_seen]
-        all_log_pred_counts = all_log_pred_counts[:num_samples_seen]
-        all_true_profs = all_true_profs[:num_samples_seen]
-        all_true_counts = all_true_counts[:num_samples_seen]
-        return batch_losses, all_log_pred_profs, all_log_pred_counts, \
-            all_true_profs, all_true_counts
+        if return_data:
+            all_log_pred_profs = all_log_pred_profs[:num_samples_seen]
+            all_log_pred_counts = all_log_pred_counts[:num_samples_seen]
+            all_true_profs = all_true_profs[:num_samples_seen]
+            all_true_counts = all_true_counts[:num_samples_seen]
+
+            return batch_losses, all_log_pred_profs, all_log_pred_counts, \
+                all_true_profs, all_true_counts
+        else:
+            all_log_pred_profs.resize(num_samples_seen, axis=0)
+            all_log_pred_counts.resize(num_samples_seen, axis=0)
+            all_true_profs.resize(num_samples_seen, axis=0)
+            all_true_counts.resize(num_samples_seen, axis=0)
+            data_file.close()
+            return batch_losses
     else:
         return batch_losses
 
@@ -479,19 +514,17 @@ def train_model(
         data_enq.start(num_workers, num_workers * 2)
         data_gen = data_enq.get()
         data_num_batches = len(data_enq.sequence)
-        _, log_pred_profs, log_pred_counts, true_profs, true_counts = \
-            run_epoch(
-                data_gen, data_num_batches, "eval", model, model_num_tasks,
-                data_num_tasks, task_inds=task_inds, return_data=True
+        data_path = os.path.join(output_dir, "test_data_%s.h5" % prefix)
+        run_epoch(
+            data_gen, data_num_batches, "eval", model, model_num_tasks,
+            data_num_tasks, task_inds=task_inds, store_data_path=data_path
         )
 
-        metrics = profile_performance.compute_performance_metrics(
-            true_profs, log_pred_profs, true_counts, log_pred_counts
+        metrics = profile_performance.compute_performance_metrics_from_file(
+            data_path
         )
         profile_performance.log_performance_metrics(metrics, prefix,  _run)
         data_enq.stop()  # Stop the parallel enqueuer
-        # Garbage collection
-        del log_pred_profs, log_pred_counts, true_profs, true_counts
         del metrics
 
     return run_num, output_dir, best_epoch, best_val_epoch_loss, best_model_path
@@ -570,10 +603,10 @@ def run_training(
 @train_ex.automain
 def main():
     import json
-    paths_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/SPI1/SPI1_training_paths.json"
+    paths_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/E2F6/E2F6_training_paths.json"
     with open(paths_json_path, "r") as f:
         paths_json = json.load(f)
-    config_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/SPI1/SPI1_config.json"
+    config_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/E2F6/E2F6_config.json"
     with open(config_json_path, "r") as f:
         config_json = json.load(f)
 
