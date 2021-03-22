@@ -1,3 +1,5 @@
+set -beEuo pipefail
+
 tfname=$1
 foldnum=$2
 
@@ -5,7 +7,7 @@ trainthreads=16
 
 labeldir=/users/amtseng/tfmodisco/data/processed/ENCODE/labels/$tfname/
 svmlabeldir=/users/amtseng/tfmodisco/data/processed/ENCODE/svm_labels/$tfname/
-modeldir=/users/amtseng/tfmodisco/models/trained_models/$tfname\_svm
+modeldir=/users/amtseng/tfmodisco/models/trained_models/singletask_svm/$tfname\_svm
 
 for item in `ls $labeldir/*.bed.gz`
 do 
