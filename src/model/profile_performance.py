@@ -610,7 +610,7 @@ def log_performance_metrics(metrics, prefix, _run, print_log=True):
     # T-arrays (where T is the number of tasks)
 
     _run.log_scalar("%s_prof_nll" % prefix, list(nll))
-    _run.log_scalar("%s_prof_crossent" % prefix, list(nll))
+    _run.log_scalar("%s_prof_crossent" % prefix, list(ce))
     _run.log_scalar("%s_prof_jsd" % prefix, list(jsd))
     _run.log_scalar("%s_prof_pearson" % prefix, list(prof_pears))
     _run.log_scalar("%s_prof_spearman" % prefix, list(prof_spear))
