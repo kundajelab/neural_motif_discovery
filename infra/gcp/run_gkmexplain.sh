@@ -13,7 +13,7 @@ outpath=/users/amtseng/tfmodisco/results/svm_importance/$tfname/$taskname/$foldn
 mkdir -p `dirname $outpath`
 
 labeldir=/users/amtseng/tfmodisco/data/processed/ENCODE/svm_labels/$tfname/$taskname
-modelpath=/users/amtseng/tfmodisco/models/trained_models/$tfname\_svm/$taskname/$foldnum.model.txt
+modelpath=/users/amtseng/tfmodisco/models/trained_models/singletask_svm/$tfname\_svm/$taskname/$foldnum.model.txt
 
 # Careful! Extra slashes in buckets are different paths
 gsutil cp $bucket$labeldir/inputs.train.$foldnum.positives $labeldir/inputs.train.$foldnum.positives

@@ -17,7 +17,10 @@ echo "Copying source code..."
 gsutil -m rsync -r $localstem/tfmodisco/src $bucketstem/tfmodisco/src
 
 echo "Copying data..."
-gsutil -m rsync -r $localstem/tfmodisco/data/processed/ENCODE $bucketstem/tfmodisco/data/processed/ENCODE
+gsutil -m rsync -x ".*_replicate_profiles\.h5$|.*_pseudorep_profiles\.h5$" -r $localstem/tfmodisco/data/processed/ENCODE/labels/ $bucketstem/tfmodisco/data/processed/ENCODE/labels/
+gsutil -m rsync -r $localstem/tfmodisco/data/processed/ENCODE/config/ $bucketstem/tfmodisco/data/processed/ENCODE/config/
+gsutil -m rsync -r $localstem/tfmodisco/data/processed/ENCODE/hyperparam_specs/ $bucketstem/tfmodisco/data/processed/ENCODE/hyperparam_specs/
+gsutil -m cp $localstem/tfmodisco/data/processed/ENCODE/*.json $bucketstem/tfmodisco/data/processed/ENCODE/
 
 echo "Copying genomic references..."
 gsutil -m cp $localstem/genomes/hg38.fasta $bucketstem/genomes/
@@ -25,4 +28,7 @@ gsutil -m cp $localstem/genomes/hg38.fasta.fai $bucketstem/genomes/
 gsutil -m cp $localstem/genomes/hg38.canon.chrom.sizes $bucketstem/genomes/
 
 echo "Copying trained models..."
-gsutil -m rsync -r $localstem/tfmodisco/models/trained_models/ $bucketstem/tfmodisco/models/trained_models/
+gsutil -m rsync -r $localstem/tfmodisco/models/trained_models/multitask_profile/ $bucketstem/tfmodisco/models/trained_models/multitask_profile/
+gsutil -m rsync -r $localstem/tfmodisco/models/trained_models/singletask_profile/ $bucketstem/tfmodisco/models/trained_models/singletask_profile/
+gsutil -m rsync -r $localstem/tfmodisco/models/trained_models/multitask_profile_finetune/ $bucketstem/tfmodisco/models/trained_models/multitask_profile_fintune/
+gsutil -m rsync -r $localstem/tfmodisco/models/trained_models/singletask_profile_finetune/ $bucketstem/tfmodisco/models/trained_models/singletask_profile_finetune/

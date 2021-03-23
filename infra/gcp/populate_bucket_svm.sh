@@ -12,7 +12,7 @@ echo "Copying initial scripts..."
 gsutil cp $localstem/tfmodisco/infra/gcp/run_gkmexplain.sh $bucket
 
 echo "Copying models..."
-gsutil -m cp -r $localstem/tfmodisco/models/trained_models/*_svm $bucketstem/tfmodisco/models/trained_models/
+gsutil -m rsync -r $localstem/tfmodisco/models/trained_models/singletask_svm/ $bucketstem/tfmodisco/models/trained_models/singletask_svm/
 
 echo "Copying data..."
-gsutil -m cp -r $localstem/tfmodisco/data/processed/ENCODE/svm_labels $bucketstem/tfmodisco/data/processed/ENCODE/svm_labels
+gsutil -m rsync -x ".*\/candidate_negatives\.gc\.pkl$|.*\/candidate_negatives\.tsv$" -r $localstem/tfmodisco/data/processed/ENCODE/svm_labels/ $bucketstem/tfmodisco/data/processed/ENCODE/svm_labels/
