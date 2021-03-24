@@ -10,51 +10,41 @@ import tqdm
 import h5py
 import click
 
-def import_model(model_path, model_num_tasks, profile_length):
+def import_model(model_path):
     """
-    Imports a saved `profile_tf_binding_predictor` model.
+    Imports a saved `profile_tf_binding_predictor` model with dummy losses.
     Arguments:
         `model_path`: path to model (ends in ".h5")
-        `model_num_tasks`: number of tasks in model
-        `profile_length`: length of predicted profiles
     Returns the imported model.
     """
     custom_objects = {
         "kb": keras.backend,
-        "profile_loss": train_profile_model.get_profile_loss_function(
-            model_num_tasks, profile_length
-        ),
-        "count_loss": train_profile_model.get_count_loss_function(
-            model_num_tasks
-        )
+        "profile_loss": (lambda t_vals, p_vals: keras.backend.sum(p_vals)),
+        "count_loss": (lambda t_vals, p_vals: keras.backend.sum(p_vals))
     }
     return keras.models.load_model(model_path, custom_objects=custom_objects)
 
 
-def compute_nlls(log_pred_profs, true_profs, true_counts):
+def compute_cross_ents(log_pred_profs, true_profs, true_counts):
     """
     From a set of profile predictions and the set of true profiles, computes the
-    NLLs of the predictions.
+    cross entropies of the predictions.
     Arguments:
         `log_pred_profs`: M x T x O x 2 array of predicted log profile
             probabilities, as returned by `compute_nullified_predictions`
         `true_profs`: M x T x O x 2 array of true profile counts
         `true_counts: M x T x 2 array of true total counts
-    Returns an M x T x 2 array of NLLs, and an M x T x 2 array of normalized
-    NLLs.
+    Returns an M x T x 2 array of cross entropy values.
     """
-    # Swap axes on profiles to make them N x T x 2 x O
+    # Swap axes on profiles to make them M x T x 2 x O
     true_profs = np.swapaxes(true_profs, 2, 3)
     log_pred_profs = np.swapaxes(log_pred_profs, 2, 3)
     
-    nll = -profile_performance.multinomial_log_probs(
+    _, cross_ents = profile_performance.multinomial_log_probs(
         log_pred_profs, true_counts, true_profs
-    )  # Shape: N x T x 2
+    )  # Shape: M x T x 2
 
-    # Normalize the NLLs by dividing by the average counts over strands/tasks
-    norm_nll = nll / true_counts
-
-    return nll, norm_nll
+    return cross_ents
 
 
 def compute_filter_activations(
@@ -210,9 +200,9 @@ def compute_all_filter_predictions(
         `input_length`: length of input sequence
         `profile_length`: length of output profiles
         `reference_fasta`: path to reference FASTA
-        `coord_keep_num`: the number of top-performing coordinates to keep
+        `coord_keep_num`: the number of top-performing coordinates to keep, M
         `chrom_set`: if provided, the set of chromosomes to run predictions,
-            nullified predictions, and activations for, M
+            nullified predictions, and activations for
         `task_inds`: if provided, limit the coordinates and input/output
             profiles to these tasks; by default uses all tasks
     Results will be saved in the specified HDF5, under the following keys:
@@ -221,8 +211,7 @@ def compute_all_filter_predictions(
                 probabilities (M is the number of peaks, T is number of tasks,
                 O is profile length, 2 for each strand)
             `log_pred_counts`: M x T x 2 array of log counts
-            `nlls`: M x T x 2 array of NLL values
-            `norm_nlls`: M x T x 2 array of normalized NLL values
+            `cross_ents`: M x T x 2 array of cross entropy values
         `coords`: contains coordinates used to compute activations and
             nullified predictions (subset of all peaks)
             `coords_chrom`: M-array of chromosome (string)
@@ -237,8 +226,7 @@ def compute_all_filter_predictions(
                 probabilities if each of the F filters were nullified
             `log_pred_counts`: M x F x T x 2 array of log counts if each of the
                 F filters were nullified
-            `nlls`: M x F x T x 2 array of NLL values
-            `norm_nlls`: M x F x T x 2 array of normalized NLL values
+            `cross_ents`: M x F x T x 2 array of cross entropy values
         `truth`:
             `true_profs`: N x T x O x 2 array of true profile counts
             `true_counts`: N x T x 2 array of true counts
@@ -247,7 +235,7 @@ def compute_all_filter_predictions(
     h5_file = h5py.File(out_hdf5_path, "w")
 
     print("Importing model...")
-    model = import_model(model_path, model_num_tasks, profile_length)
+    model = import_model(model_path)
 
     # Compute normal predictions and truth
     print("Computing predictions...")
@@ -258,12 +246,12 @@ def compute_all_filter_predictions(
             chrom_set=chrom_set, task_inds=task_inds, 
         )
 
-    # Compute NLL
-    nlls, norm_nlls = compute_nlls(log_pred_profs, true_profs, true_counts)
-    # Average over tasks and strands to get normalized NLL per sample
-    avg_norm_nlls = np.mean(norm_nlls, axis=(1, 2))
+    # Compute cross entropy
+    cross_ents = compute_cross_ents(log_pred_profs, true_profs, true_counts)
+    # Average over tasks and strands to get normalized cross entropy per sample
+    avg_cross_ents = np.mean(cross_ents, axis=(1, 2))
     # Only keep top coordinates to do downstream computation
-    keep_inds = np.argsort(avg_norm_nlls)[:coord_keep_num]
+    keep_inds = np.argsort(avg_cross_ents)[:coord_keep_num]
 
     # Limit the set of coordinates/predictions
     coords = coords[keep_inds]
@@ -271,8 +259,7 @@ def compute_all_filter_predictions(
     log_pred_counts = log_pred_counts[keep_inds]
     true_profs = true_profs[keep_inds]
     true_counts = true_counts[keep_inds]
-    nlls = nlls[keep_inds]
-    norm_nlls = norm_nlls[keep_inds]
+    cross_ents = cross_ents[keep_inds]
 
     print("Saving predictions...")
     truth_group = h5_file.create_group("truth")
@@ -289,8 +276,7 @@ def compute_all_filter_predictions(
     pred_group.create_dataset(
         "log_pred_counts", data=log_pred_counts, compression="gzip"
     )
-    pred_group.create_dataset("nlls", data=nlls, compression="gzip")
-    pred_group.create_dataset("norm_nlls", data=norm_nlls, compression="gzip")
+    pred_group.create_dataset("cross_ents", data=cross_ents, compression="gzip")
 
     coord_group = h5_file.create_group("coords")
     coord_group.create_dataset(
@@ -327,12 +313,8 @@ def compute_all_filter_predictions(
         "log_pred_counts", (num_samples, num_filters, model_num_tasks, 2),
         compression="gzip"
     )
-    null_nlls = null_pred_group.create_dataset(
-        "nlls", (num_samples, num_filters, model_num_tasks, 2),
-        compression="gzip"
-    )
-    null_norm_nlls = null_pred_group.create_dataset(
-        "norm_nlls", (num_samples, num_filters, model_num_tasks, 2),
+    null_cross_ents = null_pred_group.create_dataset(
+        "cross_ents", (num_samples, num_filters, model_num_tasks, 2),
         compression="gzip"
     )
 
@@ -343,12 +325,11 @@ def compute_all_filter_predictions(
             data_num_tasks, model_num_tasks, input_length, profile_length,
             reference_fasta, task_inds=task_inds
         )
-        nlls, norm_nlls = compute_nlls(log_pred_profs, true_profs, true_counts)
+        cross_ents = compute_cross_ents(log_pred_profs, true_profs, true_counts)
         print("\tSaving null-filter predictions...")
         null_log_pred_profs[:, filter_index] = log_pred_profs
         null_log_pred_counts[:, filter_index] = log_pred_counts
-        null_nlls[:, filter_index] = nlls
-        null_norm_nlls[:, filter_index] = norm_nlls
+        null_cross_ents[:, filter_index] = cross_ents
 
     h5_file.close()
 
