@@ -3,9 +3,6 @@ import sacred
 import math
 import tqdm
 import os
-# This is needed, otherwise results that are saved into an HDF5 won't be able
-# to be opened by called scripts
-os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 import h5py
 import model.util as util
 import model.profile_models as profile_models
@@ -257,23 +254,23 @@ def run_epoch(
             all_true_profs = np.empty(profile_shape)
             all_true_counts = np.empty(count_shape)
         else:
-            data_file = h5py.File(store_data_path, "w")
-            all_log_pred_profs = data_file.create_dataset(
-                "log_pred_profs", profile_shape, maxshape=profile_shape,
-                compression="gzip"
-            )
-            all_log_pred_counts = data_file.create_dataset(
-                "log_pred_counts", count_shape, maxshape=count_shape,
-                compression="gzip"
-            )
-            all_true_profs = data_file.create_dataset(
-                "true_profs", profile_shape, maxshape=profile_shape,
-                compression="gzip"
-            )
-            all_true_counts = data_file.create_dataset(
-                "true_counts", count_shape, maxshape=count_shape,
-                compression="gzip"
-            )
+            with h5py.File(store_data_path, "w") as f:
+                all_log_pred_profs = f.create_dataset(
+                    "log_pred_profs", profile_shape, maxshape=profile_shape,
+                    compression="gzip"
+                )
+                all_log_pred_counts = f.create_dataset(
+                    "log_pred_counts", count_shape, maxshape=count_shape,
+                    compression="gzip"
+                )
+                all_true_profs = f.create_dataset(
+                    "true_profs", profile_shape, maxshape=profile_shape,
+                    compression="gzip"
+                )
+                all_true_counts = f.create_dataset(
+                    "true_counts", count_shape, maxshape=count_shape,
+                    compression="gzip"
+                )
 
     for _ in t_iter:
         input_seqs, profiles, statuses = next(data_gen)
@@ -324,10 +321,17 @@ def run_epoch(
 
             # Fill in the batch data/outputs into the preallocated arrays
             start, end = num_samples_seen, num_samples_seen + num_in_batch
-            all_log_pred_profs[start:end] = log_pred_profs
-            all_log_pred_counts[start:end] = log_pred_counts
-            all_true_profs[start:end] = tf_profs
-            all_true_counts[start:end] = tf_counts
+            if return_data:
+                all_log_pred_profs[start:end] = log_pred_profs
+                all_log_pred_counts[start:end] = log_pred_counts
+                all_true_profs[start:end] = tf_profs
+                all_true_counts[start:end] = tf_counts
+            else:
+                with h5py.File(store_data_path, "r+") as f:
+                    f["log_pred_profs"][start:end] = log_pred_profs
+                    f["log_pred_counts"][start:end] = log_pred_counts
+                    f["true_profs"][start:end] = tf_profs
+                    f["true_counts"][start:end] = tf_counts
 
             num_samples_seen += num_in_batch
 
@@ -343,11 +347,11 @@ def run_epoch(
             return batch_losses, all_log_pred_profs, all_log_pred_counts, \
                 all_true_profs, all_true_counts
         else:
-            all_log_pred_profs.resize(num_samples_seen, axis=0)
-            all_log_pred_counts.resize(num_samples_seen, axis=0)
-            all_true_profs.resize(num_samples_seen, axis=0)
-            all_true_counts.resize(num_samples_seen, axis=0)
-            data_file.close()
+            with h5py.File(store_data_path, "r+") as f:
+                f["log_pred_profs"].resize(num_samples_seen, axis=0)
+                f["log_pred_counts"].resize(num_samples_seen, axis=0)
+                f["true_profs"].resize(num_samples_seen, axis=0)
+                f["true_counts"].resize(num_samples_seen, axis=0)
             return batch_losses
     else:
         return batch_losses
