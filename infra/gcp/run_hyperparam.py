@@ -21,14 +21,13 @@ def copy_item(path, directory=False):
     bucket_path = os.path.join(BUCKET_URL, path[1:])  # Append without "/"
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if directory:
-        proc = subprocess.Popen([
+        subprocess.check_call([
             "gsutil", "cp", "-r", bucket_path, os.path.dirname(path)
         ])
     else:
-        proc = subprocess.Popen([
+        subprocess.check_call([
             "gsutil", "cp", bucket_path, os.path.dirname(path)
         ])
-    proc.wait()
 
 
 def copy_data(
@@ -154,8 +153,7 @@ def main(
         print("Beginning run %d" % (i + 1))
         sys.stdout.flush()
 
-        proc = subprocess.Popen(comm, env=env, stderr=subprocess.STDOUT)
-        proc.wait()
+        subprocess.check_call(comm, env=env, stderr=subprocess.STDOUT)
 
         local_run_num = i + 1  # This was the run just created locally
 
@@ -183,10 +181,9 @@ def main(
         sys.stdout.flush()
         local_run_path = os.path.join(local_model_path, str(local_run_num))
         bucket_run_path = os.path.join(bucket_model_path, str(bucket_run_num))
-        proc = subprocess.Popen([
+        subprocess.check_call([
             "gsutil", "cp", "-r", local_run_path, bucket_run_path
         ])
-        proc.wait()
 
         # Garbage-collect
         gc.collect()

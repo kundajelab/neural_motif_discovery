@@ -20,14 +20,13 @@ def copy_item(path, directory=False):
     bucket_path = os.path.join(BUCKET_URL, path[1:])  # Append without "/"
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if directory:
-        proc = subprocess.Popen([
+        subprocess.check_call([
             "gsutil", "cp", "-r", bucket_path, os.path.dirname(path)
         ])
     else:
-        proc = subprocess.Popen([
+        subprocess.check_call([
             "gsutil", "cp", bucket_path, os.path.dirname(path)
         ])
-    proc.wait()
 
 
 def copy_data(model_path, file_specs_json_path):
@@ -120,16 +119,14 @@ def main(
     print("Beginning run")
     sys.stdout.flush()
 
-    proc = subprocess.Popen(comm, stderr=subprocess.STDOUT)
-    proc.wait()
+    subprocess.check_call(comm, stderr=subprocess.STDOUT)
 
     print("Copying results into bucket...")
     sys.stdout.flush()
     bucket_out_hdf5_path = os.path.join(BUCKET_URL, out_hdf5_path[1:])
-    proc = subprocess.Popen([
+    subprocess.check_call([
         "gsutil", "cp", "-r", out_hdf5_path, bucket_out_hdf5_path
     ])
-    proc.wait()
 
     print("Done!")
 
