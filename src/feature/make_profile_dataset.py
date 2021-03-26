@@ -594,10 +594,11 @@ def create_data_loader(
 
 
 data = None
-loader = None
+data_loader = None
+enq = None
 @dataset_ex.automain
 def main():
-    global data, loader
+    global data, data_loader, enq
     import tqdm
 
     paths_json_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/SPI1/SPI1_training_paths.json"
