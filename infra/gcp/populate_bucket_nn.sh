@@ -30,5 +30,5 @@ gsutil -m cp $localstem/genomes/hg38.canon.chrom.sizes $bucketstem/genomes/
 echo "Copying trained models..."
 gsutil -m rsync -r $localstem/tfmodisco/models/trained_models/multitask_profile/ $bucketstem/tfmodisco/models/trained_models/multitask_profile/
 gsutil -m rsync -r $localstem/tfmodisco/models/trained_models/singletask_profile/ $bucketstem/tfmodisco/models/trained_models/singletask_profile/
-gsutil -m rsync -r $localstem/tfmodisco/models/trained_models/multitask_profile_finetune/ $bucketstem/tfmodisco/models/trained_models/multitask_profile_fintune/
+gsutil -m rsync -r $localstem/tfmodisco/models/trained_models/multitask_profile_finetune/ $bucketstem/tfmodisco/models/trained_models/multitask_profile_finetune/
 gsutil -m rsync -r $localstem/tfmodisco/models/trained_models/singletask_profile_finetune/ $bucketstem/tfmodisco/models/trained_models/singletask_profile_finetune/
