@@ -7,15 +7,15 @@ spec:
     spec:
       containers:
       - name: run-tfm-{tflower}-task{task}-fold{foldnum}{finetune}{hypkey}
-        image: kundajelab/tfmodisco:v0.5.10.0
+        image: kundajelab/tfmodisco:4767974
         imagePullPolicy: Always
         resources:
           requests:
             cpu: 7
-            memory: 45Gi
+            memory: 25Gi
           limits:
             cpu: 7
-            memory: 45Gi
+            memory: 25Gi
         command:
         - /bin/bash
         - -c
