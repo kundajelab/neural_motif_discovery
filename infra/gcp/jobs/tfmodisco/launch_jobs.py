@@ -64,7 +64,7 @@ def create_tf_job_specs(
         )
         spec_path = os.path.join(
             specs_dir,
-            "%s-taskall-fold%d-%s.yaml" % (tf, fold_num, hyp_key_short)
+            "%s-taskall-fold%d-%s.yaml" % (tf_lower, fold_num, hyp_key_short)
         )
         with open(spec_path, "w") as f:
             f.write(filled)
@@ -105,7 +105,7 @@ def create_tf_job_specs(
         )
         spec_path = os.path.join(
             specs_dir,
-            "%s-task%d-fold%d-%s.yaml" % (tf, task_index, fold_num, hyp_key_short)
+            "%s-task%d-fold%d-%s.yaml" % (tf_lower, task_index, fold_num, hyp_key_short)
         )
         with open(spec_path, "w") as f:
             f.write(filled)
@@ -144,7 +144,7 @@ def create_tf_job_specs(
     )
     spec_path = os.path.join(
         specs_dir,
-        "%s-taskall-fold%d-finetune-%s.yaml" % (tf, fold_num, hyp_key_short)
+        "%s-taskall-fold%d-finetune-%s.yaml" % (tf_lower, fold_num, hyp_key_short)
     )
     with open(spec_path, "w") as f:
         f.write(filled)
@@ -183,7 +183,7 @@ def create_tf_job_specs(
         )
         spec_path = os.path.join(
             specs_dir,
-            "%s-taskall_%d-fold%d-finetune-%s.yaml" % (tf, task_index, fold_num, hyp_key_short)
+            "%s-taskall_%d-fold%d-finetune-%s.yaml" % (tf_lower, task_index, fold_num, hyp_key_short)
         )
         with open(spec_path, "w") as f:
             f.write(filled)
@@ -225,7 +225,7 @@ def create_tf_job_specs(
         )
         spec_path = os.path.join(
             specs_dir,
-            "%s-task%d-fold%d-finetune-%s.yaml" % (tf, task_index, fold_num, hyp_key_short)
+            "%s-task%d-fold%d-finetune-%s.yaml" % (tf_lower, task_index, fold_num, hyp_key_short)
         )
         with open(spec_path, "w") as f:
             f.write(filled)
