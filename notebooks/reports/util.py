@@ -42,7 +42,7 @@ def import_peak_table(peak_bed_paths):
         # Add summit location column
         table["summit"] = table["peak_start"] + table["summit_offset"]
         tables.append(table)
-    return pd.concat(tables)
+    return pd.concat(tables).reset_index(drop=True)
 
 
 def import_profiles(preds_path):
