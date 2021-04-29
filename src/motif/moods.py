@@ -272,9 +272,8 @@ def compute_hits_importance_scores(
 def import_moods_hits(hits_bed):
     """
     Imports the MOODS hits as a single Pandas DataFrame.
-    Returns a Pandas DataFrame with the columns: chrom, start, end, key, strand,
-    score, peak_index, imp_frac_score
-    `key` is the name of the originating PFM, and `length` is its length.
+    The `key` column is the name of the originating PFM, and `peak_index` is the
+    index of the peak file from which it was originally found.
     """
     hit_table = pd.read_csv(
         hits_bed, sep="\t", header=None, index_col=False,

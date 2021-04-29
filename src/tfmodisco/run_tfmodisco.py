@@ -85,7 +85,7 @@ def import_shap_scores(
 
 
 def import_tfmodisco_results(
-    tfm_results_path, hyp_scores, one_hot_seqs, center_cut_size=None
+    tfm_results_path, hyp_scores, one_hot_seqs, center_cut_size
 ):
     """
     Imports the TF-MoDISco results object.
@@ -106,7 +106,7 @@ def import_tfmodisco_results(
 
     if input_length != center_cut_size:
         # Everything not cut to `center_cut_size`
-        assert act_scores.shape[1] > center_cut_size
+        assert input_length > center_cut_size
         cut_start = (input_length // 2) - (center_cut_size // 2)
         cut_end = cut_start + center_cut_size
         hyp_scores = hyp_scores[:, cut_start:cut_end]
