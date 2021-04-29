@@ -44,7 +44,7 @@ def run_motif_tree(pfm_dir, out_path):
     help="Where to save PFMs and do temporary work; if not provided, will use a random directory that will be cleaned"
 )
 def main(motif_file, group_name, out_path, temp_dir):
-    motif_files, group_names = motif_file, group_name  # Better naming
+    motif_files, group_names = motif_file, group_name  # Better variable names
     assert len(motif_files) == len(group_names)
 
     if temp_dir is not None:
@@ -60,6 +60,10 @@ def main(motif_file, group_name, out_path, temp_dir):
         with h5py.File(motif_file, "r") as f:
             for key in f.keys():
                 motif_name = "%s_%s" % (stem, key)
+
+                # Sanitize the motif name; remove . and -
+                motif_name = motif_name.replace("-", "").replace(".", "")
+
                 motif_names.append(motif_name)
                 write_pfm(
                     f[key]["pfm_short_trimmed"][:],
