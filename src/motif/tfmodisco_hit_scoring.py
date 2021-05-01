@@ -11,8 +11,6 @@ def import_tfmodisco_hits(hits_bed):
     The `key` column is the name of the originating PFM, and `peak_index` is the
     index of the peak file from which it was originally found.
     """
-    match_table = match_table[[
-    ]]
     hit_table = pd.read_csv(
         hits_bed, sep="\t", header=None, index_col=False,
         names=[
@@ -27,7 +25,7 @@ def import_tfmodisco_hits(hits_bed):
 
 @click.command()
 @click.option(
-    "-o", "--outfile", required=True, help="Path to output the hit table as TSV"
+    "-o", "--outdir", required=True, help="Path to output directory"
 )
 @click.option(
     "-k", "--hyp-score-key", required=True,
@@ -41,17 +39,24 @@ def import_tfmodisco_hits(hits_bed):
     "-c", "--center-cut-size", default=400,
     help="Length of sequence that was used to run TF-MoDISco"
 )
+@click.option(
+    "--keep-non-acgt", is_flag=True,
+    help="If given, don't remove non-ACGT score tracks"
+)
 @click.argument("shap_scores_path", nargs=1)
 @click.argument("tfm_results_path", nargs=1)
 @click.argument("peak_bed_path", nargs=1)
 def main(
-    shap_scores_path, tfm_results_path, peak_bed_path, outfile, hyp_score_key,
-    input_length, center_cut_size
+    shap_scores_path, tfm_results_path, peak_bed_path, outdir, hyp_score_key,
+    input_length, center_cut_size, keep_non_acgt
 ):
+    os.makedirs(outdir, exist_ok=True)
+
     print("Importing DeepSHAP scores and TF-MoDISco results...")
     hyp_scores, act_scores, one_hot_seqs, imp_coords = \
         run_tfmodisco.import_shap_scores(
-            shap_scores_path, hyp_score_key, center_cut_size=center_cut_size
+            shap_scores_path, hyp_score_key, center_cut_size=center_cut_size,
+            remove_non_acgt=(not keep_non_acgt)
     )
     tfm_results = run_tfmodisco.import_tfmodisco_results(
         tfm_results_path, hyp_scores, one_hot_seqs, center_cut_size
@@ -136,7 +141,7 @@ def main(
     # Map pattern index to motif key
     motif_keys = ["0_%d" % i for i in range(len(patterns))]
 
-    print("Starting hit scoring...")
+    # print("Starting hit scoring...")
     example_to_matches, pattern_to_matches = hit_scorer(
         contrib_scores={"task0": act_scores_matched},
         hypothetical_contribs={"task0": hyp_scores_matched},
@@ -161,6 +166,12 @@ def main(
             ])
     match_table = pd.DataFrame(rows, columns=colnames)
 
+    # Save raw table
+    match_table.to_csv(
+        os.path.join(outdir, "tfm_matches_raw.tsv"), sep="\t", header=True,
+        index=False
+    )
+
     # Compute importance fraction of each hit, using just the matched actual scores
     total_track_imp = np.sum(np.abs(act_scores_matched), axis=(1, 2))
     match_table["imp_frac_score"] = match_table["imp_total_score"] / \
@@ -176,15 +187,18 @@ def main(
     
     # Convert revcomp to strand
     # Note we are assuming that the input scores were all positive strand
-    match_table["key"] = match_table["revcomp"].map({True: "+", False: "-"})
+    match_table["strand"] = match_table["revcomp"].map({True: "-", False: "+"})
     
     # Convert start/end of motif hit to genomic coordinate
-    peak_starts = np.empty(len(peak_table), dtype=int)
+    # `peak_starts[i] == j` is such that if `i` is a peak index, `j` is the peak
+    # start in genomic coordinate space
+    peak_starts = np.empty(np.max(peak_table["index"]) + 1, dtype=int)
     peak_starts[peak_table["index"]] = peak_table["peak_start"]
-    offset = (input_length - center_cut_size) // 2
+    # Now reduce `peak_starts` to match `match_table` exactly
     peak_starts = peak_starts[match_table["peak_index"]]
-    
-    match_table["chrom"] = peak_table["peak_chrom"].iloc[
+    offset = (input_length - center_cut_size) // 2
+
+    match_table["chrom"] = peak_table["peak_chrom"].loc[
         match_table["peak_index"]
     ].reset_index(drop=True)
     # Note: "peak_chrom" was an index column so we need to drop that before
@@ -199,8 +213,10 @@ def main(
         "mod_precision", "mod_percentile", "fann_perclasssum_perc",
         "fann_perclassavg_perc"
     ]]
-    os.makedirs(os.path.dirname(outfile), exist_ok=True)
-    match_table.to_csv(outfile, sep="\t", header=False, index=False)
+    match_table.to_csv(
+        os.path.join(outdir, "tfm_matches.bed"), sep="\t", header=False,
+        index=False
+    )
 
 
 if __name__ == "__main__":
