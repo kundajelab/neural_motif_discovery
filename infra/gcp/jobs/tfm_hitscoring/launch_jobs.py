@@ -116,7 +116,7 @@ def create_tf_job_specs(
         out_dir = os.path.join(
             out_base,
             "singletask_profile_finetune",
-            "%s_singletask_profile_finetune_fold%d" % (tf, fold_num),
+            "%s_singletask_profile_finetune_fold%d_%s" % (tf, fold_num, hyp_key_short),
             "task_%d" % task_index
         )
         filled = template.format(
@@ -217,8 +217,8 @@ def main(
             hyp_score_key
         )
 
-        # for spec_path in spec_paths:
-        #     submit_job(spec_path)
+        for spec_path in spec_paths:
+            submit_job(spec_path)
 
 
 if __name__ == "__main__":
