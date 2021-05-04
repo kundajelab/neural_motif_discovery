@@ -141,29 +141,38 @@ def main(
     # Map pattern index to motif key
     motif_keys = ["0_%d" % i for i in range(len(patterns))]
 
-    # print("Starting hit scoring...")
-    example_to_matches, pattern_to_matches = hit_scorer(
-        contrib_scores={"task0": act_scores_matched},
-        hypothetical_contribs={"task0": hyp_scores_matched},
-        one_hot=one_hot_seqs_matched,
-        hits_to_return_per_seqlet=1
-    )
+    print("Starting hit scoring...")
+    batch_size = 1024
+    num_batches = int(np.ceil(len(act_scores_matched) / batch_size))
+    rows = []
 
-    print("Collating matches...")
+    for i in range(num_batches):
+        print("\tScoring batch %d/%d" % (i + 1, num_batches))
+        batch_slice = slice(i * batch_size, (i + 1) * batch_size)
+        example_to_matches, pattern_to_matches = hit_scorer(
+            contrib_scores={"task0": act_scores_matched[batch_slice]},
+            hypothetical_contribs={"task0": hyp_scores_matched[batch_slice]},
+            one_hot=one_hot_seqs_matched[batch_slice],
+            hits_to_return_per_seqlet=1
+        )
+        
+        offset = i * batch_size
+        for example_index, match_list in example_to_matches.items():
+            for match in match_list:
+                rows.append([
+                    match.exampleidx + offset, match.patternidx, match.start,
+                    match.end, match.is_revcomp, match.total_importance,
+                    match.aggregate_sim, match.mod_delta, match.mod_precision,
+                    match.mod_percentile, match.fann_perclasssum_perc,
+                    match.fann_perclassavg_perc
+                ])
+    
     # Collate the matches together into a big table
     colnames = [
         "example_index", "pattern_index", "start", "end", "revcomp",
         "imp_total_score", "agg_sim", "mod_delta", "mod_precision",
         "mod_percentile", "fann_perclasssum_perc", "fann_perclassavg_perc"
     ]
-    rows = []
-    for example_index, match_list in example_to_matches.items():
-        for match in match_list:
-            rows.append([
-                match.exampleidx, match.patternidx, match.start, match.end, match.is_revcomp,
-                match.total_importance, match.aggregate_sim, match.mod_delta, match.mod_precision,
-                match.mod_percentile, match.fann_perclasssum_perc, match.fann_perclassavg_perc
-            ])
     match_table = pd.DataFrame(rows, columns=colnames)
 
     # Save raw table
@@ -172,6 +181,7 @@ def main(
         index=False
     )
 
+    print("Cleaning up matches...")
     # Compute importance fraction of each hit, using just the matched actual scores
     total_track_imp = np.sum(np.abs(act_scores_matched), axis=(1, 2))
     match_table["imp_frac_score"] = match_table["imp_total_score"] / \
