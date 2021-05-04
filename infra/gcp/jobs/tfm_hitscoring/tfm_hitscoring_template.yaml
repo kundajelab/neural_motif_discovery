@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: run-tfmhs-{tflower}-task{task}-fold{foldnum}{finetune}{hypkey}
+spec:
+  template:
+    spec:
+      containers:
+      - name: run-tfmhs-{tflower}-task{task}-fold{foldnum}{finetune}{hypkey}
+        image: kundajelab/tfmodisco:d3985db
+        imagePullPolicy: Always
+        resources:
+          requests:
+            cpu: 7
+            memory: 45Gi
+          limits:
+            cpu: 7
+            memory: 45Gi
+        command:
+        - /bin/bash
+        - -c
+        args:
+        - gsutil cp gs://gbsc-gcp-lab-kundaje-user-amtseng/run_tfm_hitscoring.py ~;
+          cd ~;
+          mkdir -p /users/amtseng;
+          python run_tfm_hitscoring.py {tfname} {impscorepath} {tfmpath} -k {hypscorekey} -o {outdir} {taskarg};
+      restartPolicy: Never
+  backoffLimit: 0
