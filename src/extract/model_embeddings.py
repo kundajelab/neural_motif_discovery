@@ -130,10 +130,6 @@ def compute_embeddings(
     )
 
     print("Computing embeddings...")
-    # Run all data through the embedding model, which returns embeddings
-    all_embeddings = np.empty(
-        (num_coords, num_layers, emb_length, num_filters)
-    )
     num_batches = int(np.ceil(num_coords / batch_size))
     for i in tqdm.trange(num_batches):
         batch_slice = slice(i * batch_size, (i + 1) * batch_size)
