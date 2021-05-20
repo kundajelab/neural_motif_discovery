@@ -33,6 +33,25 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/interim/`
 		- Note that we start with the _unfiltered_ alignments from ENCODE and filter them ourselves using samtools
 			- The filtering process we do is identical, but we keep duplicate reads, because those can be useful for profile prediction
 
+- `ZNF248/`
+	- Data that's already been preprocessed somewhat by Abhi
+	- `ChIPseq`
+		- Data from ENCODE experiment [ENCSR338SEM](https://www.encodeproject.org/experiments/ENCSR338SEM/)
+		- `ZNF248_ENCSR338SEM_HEK293_{neg,pos}.bw` copied from `/oak/stanford/groups/akundaje/manyu/C2H2_ZNF_project/train_profile_models_2020/process_datasets/ENCODE_datasets/ENCSR338SEM/{neg,pos}_strand.bw`
+			- Note that the BigWigs were processed using the same pipeline as the other TFs (same flags), starting from unfiltered alignments ENCFF447DQM and ENCFF793HDZ
+		- `ZNF248_ENCSR338SEM_HEK293_all_peakints.bed.gz` is zipped version of `/oak/stanford/groups/akundaje/manyu/C2H2_ZNF_project/train_profile_models_2020/process_datasets/ENCODE_datasets/ENCSR338SEM/spp_idr.bed`, since that is IDR thresholded peaks for TFs
+			- Note that Abhi used `spp_macs2_merged_idr.bed` for training his models
+		- `control_pooled_HEK293_{neg,pos}.bw` copied from `/oak/stanford/groups/akundaje/manyu/C2H2_ZNF_project/train_profile_models_2020/process_datasets/ENCODE_datasets/pooled_control/{neg,pos}_strand.bw`
+			- Note that these are simply the pooled alignments from ENCSR157LMX, ENCSR274OGE, ENCSR342AGU, ENCSR354FNX, ENCSR429LAP, ENCSR688NWK (these six are the control experiments listed for ENCSR338SEM)
+				- Note this is alignments, not unfiltered alignments
+	- `ChIPexo`
+		- Original data from [this paper](https://www.nature.com/articles/nature21683)
+		- Data processed by Georgi
+		- Peaks and BigWigs copied from `/oak/stanford/groups/akundaje/manyu/C2H2_ZNF_project/ChipExo_modeling/TFs/ZNF248/`
+			- Original files from `/oak/stanford/groups/akundaje/marinovg/TF-models/2018-09-12-KZNF-ChIP-exo-datasets-GSE78099/ZNF248-SRR5197087/`
+			- Negative track is `ZNF248-SRR5197087.hg20-male.36mers.unique.5p.counts.minus.absValue.bigWig`, positive track is `ZNF248-SRR5197087.hg20-male.36mers.unique.5p.counts.plus.bigWig`, and IDR peaks are `ZNF248-SRR5197087.hg20-male.36mers.unique.MACS-2.1.0.shift75_extsize150.p1e-1_peaks.narrowPeak.narrowPeak.sorted.IDR.0.05-noBL.gz`
+		- There are no controls
+
 ### `processed/`
 Links to `/mnt/lab_data2/amtseng/tfmodisco/data/processed/`
 - `ENCODE/`
@@ -45,6 +64,9 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/processed/`
 		- Training configuration files like paths to training data in `labels/`, and parameter configurations like number of tasks
 	- `chrom_splits.json`
 		- This defines the chromosome splits for hg38, based on chromosome size, for appropriate training, validation, and test sets
+
+- `ZNF248/`
+	- Like each of the subdirectories in `ENCODE/`
 
 - `AI-TAC/`
 	- Contains data and models for [this paper](https://www.biorxiv.org/content/10.1101/2019.12.21.885814v1)
