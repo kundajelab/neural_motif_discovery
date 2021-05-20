@@ -3,6 +3,7 @@ import sacred
 import math
 import tqdm
 import os
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 import h5py
 import model.util as util
 import model.profile_models as profile_models
