@@ -67,6 +67,9 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/processed/`
 
 - `ZNF248/`
 	- Like each of the subdirectories in `ENCODE/`
+- `B1H/`
+	- B1H recognition codes of C2H2 zinc fingers
+	- Copied from `/oak/stanford/groups/akundaje/manyu/softwares/rcade/out/ZNF248/results.PFM.txt`
 
 - `AI-TAC/`
 	- Contains data and models for [this paper](https://www.biorxiv.org/content/10.1101/2019.12.21.885814v1)
