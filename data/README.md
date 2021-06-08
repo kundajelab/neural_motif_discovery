@@ -23,6 +23,14 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/raw/`
 		- The API for the download of the experiment and files metadata is described [here](https://app.swaggerhub.com/apis-docs/encodeproject/api/basic_search/)
 	- The files for each TF are downloaded by `download_ENCODE_data.py`
 
+- `BPNet/`
+	- `BPNet_ChIPseq_imp_scores.h5`
+		- Contains the raw coordinates, importance scores, and input sequences for the Nanog/Oct4/Sox2 ChIP-seq model in the BPNet paper
+		- Copied from `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/output/seq,peaks,OSN,0,10,1,FALSE,same,0.5,64,50,0.004,9,FALSE,[1,50],TRUE,TRUE/deeplift.imp_score.h5`
+	- `BPNet_{Nanog,Oct4,Sox2}_{ChIPseq,ChIPnexus}_idr-peaks.bed.gz`
+		- Original called IDR peaks from `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/data/chip-seq/` and `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/data/chip-nexus/`
+		- Note that these ChIPseq peaks are not to be confused with the peaks at `/users/amtseng/tfmodisco/data/processed/BPNet/ChIPseq/`, which come from the extracted importance scores
+
 ### `interim/`
 Links to `/mnt/lab_data2/amtseng/tfmodisco/data/interim/`
 - Raw data that has been processed to an intermediate form
@@ -106,3 +114,8 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/processed/`
 		- HOCOMOCO v11 human motifs in MEME format (from [here](https://hocomoco11.autosome.ru/downloads_v11))
 	- `HOCOMOCO_JASPAR_motifs.txt`
 		- Combination of both JASPAR and HOCOMOCO motifs
+
+- `BPNet/`
+	- `BPNet_{Nanog,Oct4,Sox2}_ChIPseq_all_peakints.bed.gz`
+		- Peak BED files extracted from the ChIP-seq importance scores of the BPNet paper
+		- Note that these peaks are all length 1 and centered at the summits
