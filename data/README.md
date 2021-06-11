@@ -27,8 +27,8 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/raw/`
 	- `BPNet_ChIPseq_imp_scores.h5`
 		- Contains the raw coordinates, importance scores, and input sequences for the Nanog/Oct4/Sox2 ChIP-seq model in the BPNet paper
 		- Copied from `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/output/seq,peaks,OSN,0,10,1,FALSE,same,0.5,64,50,0.004,9,FALSE,[1,50],TRUE,TRUE/deeplift.imp_score.h5`
-	- `BPNet_{Nanog,Oct4,Sox2}_{ChIPseq,ChIPnexus}_idr-peaks.bed.gz`
-		- Original called IDR peaks from `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/data/chip-seq/` and `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/data/chip-nexus/`
+	- `BPNet_{Nanog,Oct4,Sox2}_{ChIPseq,ChIPnexus}_idr-peaks.bed.gz`, `BPNet_{Nanog,Oct4,Sox2}_ChIPnexus_{neg,pos}.bw`
+		- Original called IDR peaks and read BigWigs from `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/data/chip-seq/` and `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/data/chip-nexus/`
 		- Note that these ChIPseq peaks are not to be confused with the peaks at `/users/amtseng/tfmodisco/data/processed/BPNet/ChIPseq/`, which come from the extracted importance scores
 
 ### `interim/`
