@@ -27,6 +27,9 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/raw/`
 	- `BPNet_ChIPseq_imp_scores.h5`
 		- Contains the raw coordinates, importance scores, and input sequences for the Nanog/Oct4/Sox2 ChIP-seq model in the BPNet paper
 		- Copied from `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/output/seq,peaks,OSN,0,10,1,FALSE,same,0.5,64,50,0.004,9,FALSE,[1,50],TRUE,TRUE/deeplift.imp_score.h5`
+	- `BPNet_ChIPnexus_imp_scores.h5`
+		- Contains the raw coordinates, importance scores, and input sequences for the Nanog/Oct4/Sox2 ChIP-nexus model in the BPNet paper (fold 1)
+		- Copied from `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/output/nexus,peaks,OSNK,0,10,1,FALSE,same,0.5,64,25,0.004,9,FALSE,[1,50],TRUE,FALSE,1/deeplift.imp_score.h5`
 	- `BPNet_{Nanog,Oct4,Sox2}_{ChIPseq,ChIPnexus}_idr-peaks.bed.gz`, `BPNet_{Nanog,Oct4,Sox2}_ChIPnexus_{neg,pos}.bw`
 		- Original called IDR peaks and read BigWigs from `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/data/chip-seq/` and `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/data/chip-nexus/`
 		- Note that these ChIPseq peaks are not to be confused with the peaks at `/users/amtseng/tfmodisco/data/processed/BPNet/ChIPseq/`, which come from the extracted importance scores
@@ -119,3 +122,5 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/processed/`
 	- `BPNet_{Nanog,Oct4,Sox2}_ChIPseq_all_peakints.bed.gz`
 		- Peak BED files extracted from the ChIP-seq importance scores of the BPNet paper
 		- Note that these peaks are all length 1 and centered at the summits
+	- `BPNet_{Nanog,Oct4,Sox2}_ChIPnexus_profiles.h5`
+		- ChIP-nexus profiles in HDF5 format instead of BigWig format
