@@ -287,8 +287,8 @@ def import_moods_hits(hits_bed):
 
 def get_moods_hits(
     pfm_dict, reference_fasta, peak_bed_path, shap_scores_hdf5_path,
-    hyp_score_key, expand_peak_length=None, moods_pval_thresh=0.0001,
-    out_dir=None, remove_intermediates=True
+    hyp_score_key, input_length=None, center_cut_size=400,
+    moods_pval_thresh=0.0001, out_dir=None, remove_intermediates=True
 ):
     """
     From a dictionary of PFMs, runs MOODS and returns the result as a Pandas
@@ -305,8 +305,10 @@ def get_moods_hits(
             scores HDF5
         `peak_bed_path`: BED file of peaks; we require that these coordinates
             must match the DeepSHAP score coordinates exactly
-        `expand_peak_length`: if given, expand the peaks (centered at summits)
-            to this length
+        `input_length`: if given, first expand the peaks (centered at summits)
+            to this length to match with DeepSHAP scores
+        `center_cut_size`: if given, use this length of peaks (centered at
+            summits) to filter hits for
         `moods_pval_thresh`: threshold p-value for MOODS to use
         `out_dir`: a directory to store intermediates and the final scored hits
         `remove_intermediates`: if True, all intermediate files are removed,
@@ -322,8 +324,54 @@ def get_moods_hits(
     """
     os.makedirs(out_dir, exist_ok=True)
 
-    pfm_keys = list(pfm_dict.keys())
+    pfm_keys = list(pfm_dict.keys()) 
+
+    # If needed, expand peaks to given length for DeepSHAP
+    if input_length:
+        peaks_table = pd.read_csv(
+            peak_bed_path, sep="\t", header=None, index_col=False,
+            usecols=[0, 1, 2, 9],
+            names=["chrom", "start", "end", "summit_offset"]
+        )
+        peaks_table["start"] = \
+            (peaks_table["start"] + peaks_table["summit_offset"]) - \
+            (input_length // 2)
+        peaks_table["end"] = peaks_table["start"] + input_length
+        # Make sure nothing is negative
+        peaks_table["min"] = 0
+        peaks_table["start"] = peaks_table[["start", "min"]].max(axis=1)
+        del peaks_table["min"]
+        peaks_table[["chrom", "start", "end"]].to_csv(
+            os.path.join(out_dir, "peaks_expanded.bed"), sep="\t",
+            header=False, index=False
+        )
+        shap_peak_bed_path = os.path.join(out_dir, "peaks_expanded.bed")
+    else:
+        shap_peak_bed_path = peak_bed_path
     
+    # If needed, cut peaks to smaller size for filtering
+    if center_cut_size:
+        peaks_table = pd.read_csv(
+            peak_bed_path, sep="\t", header=None, index_col=False,
+            usecols=[0, 1, 2, 9],
+            names=["chrom", "start", "end", "summit_offset"]
+        )
+        peaks_table["start"] = \
+            (peaks_table["start"] + peaks_table["summit_offset"]) - \
+            (center_cut_size // 2)
+        peaks_table["end"] = peaks_table["start"] + center_cut_size
+        # Make sure nothing is negative
+        peaks_table["min"] = 0
+        peaks_table["start"] = peaks_table[["start", "min"]].max(axis=1)
+        del peaks_table["min"]
+        peaks_table[["chrom", "start", "end"]].to_csv(
+            os.path.join(out_dir, "peaks_cut.bed"), sep="\t",
+            header=False, index=False
+        )
+        filter_peak_bed_path = os.path.join(out_dir, "peaks_cut.bed")
+    else:
+        filter_peak_bed_path = shap_peak_bed_path
+
     # Create PFM files
     export_motifs(pfm_dict, out_dir)
 
@@ -336,32 +384,11 @@ def get_moods_hits(
         os.path.join(out_dir, "moods_out.bed")
     )
 
-    # If needed, expand peaks to given length
-    if expand_peak_length:
-        peaks_table = pd.read_csv(
-            peak_bed_path, sep="\t", header=None, index_col=False,
-            usecols=[0, 1, 2, 9],
-            names=["chrom", "start", "end", "summit_offset"]
-        )
-        peaks_table["start"] = \
-            (peaks_table["start"] + peaks_table["summit_offset"]) - \
-            (expand_peak_length // 2)
-        peaks_table["end"] = peaks_table["start"] + expand_peak_length
-        # Make sure nothing is negative
-        peaks_table["min"] = 0
-        peaks_table["start"] = peaks_table[["start", "min"]].max(axis=1)
-        del peaks_table["min"]
-        peaks_table[["chrom", "start", "end"]].to_csv(
-            os.path.join(out_dir, "peaks_expanded.bed"), sep="\t",
-            header=False, index=False
-        )
-        peak_bed_path = os.path.join(out_dir, "peaks_expanded.bed")
-
     # Filter hits for those that overlap peaks
     filter_hits_for_peaks(
         os.path.join(out_dir, "moods_out.bed"),
         os.path.join(out_dir, "moods_filtered.bed"),
-        peak_bed_path
+        filter_peak_bed_path
     )
 
     # Collapse overlapping hits of the same motif
@@ -373,7 +400,7 @@ def get_moods_hits(
 
     compute_hits_importance_scores(
         os.path.join(out_dir, "moods_filtered_collapsed.bed"),
-        shap_scores_hdf5_path, hyp_score_key, peak_bed_path,
+        shap_scores_hdf5_path, hyp_score_key, shap_peak_bed_path,
         os.path.join(out_dir, "moods_filtered_collapsed_scored.bed")
     )
 
