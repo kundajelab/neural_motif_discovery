@@ -77,7 +77,8 @@ motif_colors <- as.character(motif_colors)
 
 num_motifs <- length(pfms)
 
-png(plot_path, width=(100 * max(num_motifs, 5)), height=(100 * max(num_motifs, 5)))
+imagesize <- min(100 * max(num_motifs, 5), 10000)
+png(plot_path, width=imagesize, height=imagesize)
 
 motifPiles(
     phylog=phylog,  # Tree object
