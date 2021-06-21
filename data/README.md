@@ -33,6 +33,8 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/raw/`
 	- `BPNet_{Nanog,Oct4,Sox2}_{ChIPseq,ChIPnexus}_idr-peaks.bed.gz`, `BPNet_{Nanog,Oct4,Sox2}_ChIPnexus_{neg,pos}.bw`
 		- Original called IDR peaks and read BigWigs from `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/data/chip-seq/` and `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/data/chip-nexus/`
 		- Note that these ChIPseq peaks are not to be confused with the peaks at `/users/amtseng/tfmodisco/data/processed/BPNet/ChIPseq/`, which come from the extracted importance scores
+	- `BPNet_motif_hits_annotated.parq`
+		- Copied from `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/output/dfi_subset.annotated.v3.parq`
 
 ### `interim/`
 Links to `/mnt/lab_data2/amtseng/tfmodisco/data/interim/`
@@ -124,3 +126,5 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/processed/`
 		- Note that these peaks are all length 1 and centered at the summits
 	- `BPNet_{Nanog,Oct4,Sox2}_ChIPnexus_profiles.h5`
 		- ChIP-nexus profiles in HDF5 format instead of BigWig format
+	- `BPNet_motif_hits/`
+		- Contains extracted motif hits from `BPNet_motif_hits_annotated.parq`
