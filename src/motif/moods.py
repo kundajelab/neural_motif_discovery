@@ -244,27 +244,32 @@ def compute_hits_importance_scores(
     del merged_hits["peak_min"]
     del merged_hits["peak_max"]
 
-    # Get score of each motif hit as average importance over the hit, divided
-    # by the total score of the sequence
-    scores = np.empty(len(merged_hits))
+    # Get score of each motif hit as total and fractional importance of the hit
+    tot_scores = np.empty(len(merged_hits))
+    frac_scores = np.empty(len(merged_hits))
     for peak_index, group in merged_hits.groupby("peak_index"):
         # Iterate over grouped table by peak
         imp_index = order_inds[peak_index]  # Could be -1
         score_track = np.sum(np.abs(imp_scores[imp_index]), axis=1)
-        total_score = np.sum(score_track)
+        score_track_total = np.sum(score_track)
         for i, row in group.iterrows():
             if imp_index < 0:
                 # There was no match; set score to NaN
-                scores[i] = np.nan
+                tot_scores[i] = np.nan
+                frac_scores[i] = np.nan
                 continue
-            scores[i] = np.mean(
-                    score_track[row["motif_rel_start"]:row["motif_rel_end"]]
-            ) / total_score
 
-    merged_hits["imp_frac_score"] = scores
+            tot_score = np.sum(
+                score_track[row["motif_rel_start"]:row["motif_rel_end"]]
+            )
+            tot_scores[i] = tot_score
+            frac_scores[i] = tot_score / score_track_total
+
+    merged_hits["imp_total_score"] = tot_scores
+    merged_hits["imp_frac_score"] = frac_scores
     new_hit_table = merged_hits[[
         "chrom", "start", "end", "key", "strand", "score", "peak_index",
-        "imp_frac_score"
+        "imp_total_score", "imp_frac_score"
     ]]
     new_hit_table.to_csv(out_path, sep="\t", header=False, index=False)
 
@@ -279,7 +284,7 @@ def import_moods_hits(hits_bed):
         hits_bed, sep="\t", header=None, index_col=False,
         names=[
             "chrom", "start", "end", "key", "strand", "score", "peak_index",
-            "imp_frac_score"
+            "imp_total_score", "imp_frac_score"
         ]
     )
     return hit_table
