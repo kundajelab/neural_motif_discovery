@@ -48,13 +48,25 @@ def import_tfmodisco_hits(hits_bed):
     "-m", "--min-ic", default=0.2,
     help="Information content cut-off to use to trim motif hits"
 )
+@click.option(
+    "-mc", "--metacluster-ind", default=0,
+    help="Index of the metacluster whose patterns to use for motif assignment; defaults to metacluster 0"
+)
+@click.option(
+    "-p", "--pattern-inds", default=None, type=str,
+    help="Comma-delimited list of pattern indices in the metacluster to use for motif assignment; defaults to all patterns in the metacluster"
+)
 @click.argument("shap_scores_path", nargs=1)
 @click.argument("tfm_results_path", nargs=1)
 @click.argument("peak_bed_path", nargs=1)
 def main(
     shap_scores_path, tfm_results_path, peak_bed_path, outdir, hyp_score_key,
-    input_length, center_cut_size, keep_non_acgt, min_ic
+    input_length, center_cut_size, keep_non_acgt, min_ic, metacluster_ind,
+    pattern_inds
 ):
+    if pattern_inds is not None:
+        pattern_inds = [int(x) for x in pattern_inds.split(",")]
+
     os.makedirs(outdir, exist_ok=True)
 
     print("Importing DeepSHAP scores and TF-MoDISco results...")
@@ -120,9 +132,15 @@ def main(
     print("Preparing the hit scorer...")
     # Only do the first metacluster (positive scores)
     patterns = tfm_results.metacluster_idx_to_submetacluster_results[
-        "metacluster_0"
+        "metacluster_%d" % metacluster_ind
     ].seqlets_to_patterns_result.patterns
-    
+
+    # If specified, use only specific patterns in the metacluster
+    if pattern_inds is None:
+        pattern_inds = list(range(len(patterns)))
+    else:
+        patterns = [patterns[i] for i in pattern_inds]
+
     # Instantiate the hit scorer
     hit_scorer = densityadapted_hitscoring.MakeHitScorer(
         patterns=patterns,
@@ -144,7 +162,7 @@ def main(
     )
 
     # Map pattern index to motif key
-    motif_keys = ["0_%d" % i for i in range(len(patterns))]
+    motif_keys = ["%d_%d" % (metacluster_ind, i) for i in pattern_inds]
 
     print("Starting hit scoring...")
     batch_size = 1024
