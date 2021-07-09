@@ -2,6 +2,7 @@ import os
 import subprocess
 import numpy as np
 import pandas as pd
+import motif.read_motifs as read_motifs
 import tfmodisco.run_tfmodisco as run_tfmodisco 
 
 def export_motifs(pfms, out_dir):
@@ -109,48 +110,9 @@ def filter_hits_for_peaks(
     g.close()
 
 
-def collapse_hits(filtered_hits_path, collapsed_hits_path, pfm_keys):
-    """
-    Collapses hits by merging instances of the same motif that overlap.
-    """
-    # For each PFM key, merge all its hits, collapsing strand, score, and peak
-    # index
-    temp_file = collapsed_hits_path + ".tmp"
-    f = open(temp_file, "w")  # Clear out the file
-    f.close()
-    with open(temp_file, "a") as f:
-        for pfm_key in pfm_keys:
-            comm = ["cat", filtered_hits_path]
-            comm += ["|", "awk", "'$4 == \"%s\"'" % pfm_key]
-            comm += ["|", "bedtools", "sort"]
-            comm += [
-                "|", "bedtools", "merge",
-                "-c", "4,5,6,7", "-o", "distinct,collapse,collapse,collapse"
-            ]
-            subprocess.check_call(" ".join(comm), shell=True, stdout=f)
-
-    # For all collapsed instances, pick the instance with the best score
-    f = open(temp_file, "r")
-    g = open(collapsed_hits_path, "w")
-    for line in f:
-        if "," in line:
-            tokens = line.strip().split("\t")
-            g.write("\t".join(tokens[:4]))
-            scores = [float(x) for x in tokens[5].split(",")]
-            i = np.argmax(scores)
-            g.write(
-                "\t" + tokens[4].split(",")[i] + "\t" + str(scores[i]) + \
-                "\t" + tokens[6].split(",")[i] + "\n"
-            )
-        else:
-            g.write(line)
-
-    f.close()
-    g.close()
-
-
 def compute_hits_importance_scores(
-    hits_bed_path, shap_scores_hdf5_path, hyp_score_key, peak_bed_path, out_path
+    hits_bed_path, shap_scores_hdf5_path, hyp_score_key, peak_bed_path,
+    pfm_dict, out_path
 ):
     """
     For each MOODS hit, computes the hit's importance score as the ratio of the
@@ -164,6 +126,8 @@ def compute_hits_importance_scores(
             scores HDF5
         `peak_bed_path`: BED file of peaks; we require that these coordinates
             must match the DeepSHAP score coordinates exactly
+        `pfm_dict`: the dictionary mapping keys to N x 4 NumPy arrays (N may be
+            different for each PFM) used for calling motif hits
         `out_path`: path to output the resulting table
     Each of the DeepSHAP score HDF5s must be of the form:
         `coords_chrom`: N-array of chromosome (string)
@@ -237,40 +201,65 @@ def compute_hits_importance_scores(
     merged_hits["peak_min"] = 0
     merged_hits["peak_max"] = \
         merged_hits["peak_end"] - merged_hits["peak_start"]
+
     merged_hits["motif_rel_start"] = \
         merged_hits[["motif_rel_start", "peak_min"]].max(axis=1)
     merged_hits["motif_rel_end"] = \
         merged_hits[["motif_rel_end", "peak_max"]].min(axis=1)
+
     del merged_hits["peak_min"]
     del merged_hits["peak_max"]
 
-    # Get score of each motif hit as total and fractional importance of the hit
+    # Compute IC for each motif
+    ic_dict = {
+        key : read_motifs.pfm_info_content(pfm) for key, pfm in pfm_dict.items()
+    }
+
+    # For each hit, compute the total absolute importance, fraction absolute
+    # importance, and IC-weighted importance average
     tot_scores = np.empty(len(merged_hits))
     frac_scores = np.empty(len(merged_hits))
+    ic_avg_scores = np.empty(len(merged_hits))
     for peak_index, group in merged_hits.groupby("peak_index"):
         # Iterate over grouped table by peak
         imp_index = order_inds[peak_index]  # Could be -1
-        score_track = np.sum(np.abs(imp_scores[imp_index]), axis=1)
-        score_track_total = np.sum(score_track)
+        full_score_track = np.sum(imp_scores[imp_index], axis=1)
+        full_score_track_total = np.sum(np.abs(full_score_track))
         for i, row in group.iterrows():
             if imp_index < 0:
                 # There was no match; set score to NaN
                 tot_scores[i] = np.nan
-                frac_scores[i] = np.nan
                 continue
+            
+            score_track = full_score_track[
+                row["motif_rel_start"]:row["motif_rel_end"]
+            ]
+            tot_scores[i] = np.sum(np.abs(score_track))
+            frac_scores[i] = tot_scores[i] / full_score_track_total
 
-            tot_score = np.sum(
-                score_track[row["motif_rel_start"]:row["motif_rel_end"]]
-            )
-            tot_scores[i] = tot_score
-            frac_scores[i] = tot_score / score_track_total
+            ic = ic_dict[row["key"]]
+            if row["strand"] == "-":
+                ic = np.flip(ic)
+            if len(score_track) != len(ic):
+                print("Hit at %s:%d-%d is outside of importance score range" % (
+                    row["chrom"], row["start"], row["end"]
+                ))
+                tot_scores[i] = np.nan
+                continue
+            ic_avg_scores[i] = np.mean(score_track * ic)
 
     merged_hits["imp_total_score"] = tot_scores
     merged_hits["imp_frac_score"] = frac_scores
+    merged_hits["imp_ic_avg_score"] = ic_avg_scores
     new_hit_table = merged_hits[[
         "chrom", "start", "end", "key", "strand", "score", "peak_index",
-        "imp_total_score", "imp_frac_score"
+        "imp_total_score", "imp_frac_score", "imp_ic_avg_score"
     ]]
+
+    # Filter out hits that did not match an importance score track or overran
+    # the boundaries
+    new_hit_table = new_hit_table.dropna(subset=["imp_total_score"])
+
     new_hit_table.to_csv(out_path, sep="\t", header=False, index=False)
 
 
@@ -284,7 +273,7 @@ def import_moods_hits(hits_bed):
         hits_bed, sep="\t", header=None, index_col=False,
         names=[
             "chrom", "start", "end", "key", "strand", "score", "peak_index",
-            "imp_total_score", "imp_frac_score"
+            "imp_total_score", "imp_frac_score", "imp_ic_avg_score"
         ]
     )
     return hit_table
@@ -396,26 +385,19 @@ def get_moods_hits(
         filter_peak_bed_path
     )
 
-    # Collapse overlapping hits of the same motif
-    collapse_hits(
-        os.path.join(out_dir, "moods_filtered.bed"),
-        os.path.join(out_dir, "moods_filtered_collapsed.bed"),
-        pfm_keys
-    )
-
     compute_hits_importance_scores(
-        os.path.join(out_dir, "moods_filtered_collapsed.bed"),
-        shap_scores_hdf5_path, hyp_score_key, shap_peak_bed_path,
-        os.path.join(out_dir, "moods_filtered_collapsed_scored.bed")
+        os.path.join(out_dir, "moods_filtered.bed"),
+        shap_scores_hdf5_path, hyp_score_key, shap_peak_bed_path, pfm_dict,
+        os.path.join(out_dir, "moods_filtered_scored.bed")
     )
 
     hit_table = import_moods_hits(
-        os.path.join(out_dir, "moods_filtered_collapsed_scored.bed")
+        os.path.join(out_dir, "moods_filtered_scored.bed")
     )
 
     if remove_intermediates:
         for item in os.listdir(out_dir):
-            if item != "moods_filtered_collapsed_scored.bed":
+            if item != "moods_filtered_scored.bed":
                 os.remove(os.path.join(out_dir, item))
 
     return hit_table
