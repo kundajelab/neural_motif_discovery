@@ -161,7 +161,7 @@ def import_meme_pfms(meme_results_path):
         pfm = []
         pfm_matrix = motif.find("probabilities").find("alphabet_matrix")
         evalue = motif.get("e_value")
-        evalues.append(evalue)
+        evalues.append(float(evalue))
         for row in pfm_matrix:
             base_probs = np.array([float(base.text) for base in row])
             pfm.append(base_probs)
