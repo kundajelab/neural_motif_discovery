@@ -78,3 +78,105 @@ def import_profiles(preds_path):
             coords[batch_slice, 2] = f["coords"]["coords_end"][batch_slice]
     
     return true_profs, pred_profs, coords
+
+
+def motif_similarity_score(motif_1, motif_2, average=True, align_to_longer=True):
+    """
+    Computes the motif similarity score between two motifs by
+    the summed cosine similarity, maximized over all possible sliding
+    windows. Also returns the index relative to the start of `motif_2`
+    where `motif_1` should be placed to maximize this score.
+    If `average` is True, then use average of similarity of overlap.
+    If `align_to_longer` is True, always use the longer motif as the basis
+    for the index computation (if tie use `motif_2`). Otherwise, always use
+    `motif_2`.
+    """
+    # L2-normalize
+    motif_1 = motif_1 - np.mean(motif_1, axis=1, keepdims=True)
+    motif_2 = motif_2 - np.mean(motif_2, axis=1, keepdims=True)
+    motif_1 = motif_1 / np.sqrt(np.sum(motif_1 * motif_1, axis=1, keepdims=True))
+    motif_2 = motif_2 / np.sqrt(np.sum(motif_2 * motif_2, axis=1, keepdims=True))
+    
+    # Mean-normalize
+    motif_1 = motif_1 - np.mean(motif_1, axis=1, keepdims=True)
+    motif_2 = motif_2 - np.mean(motif_2, axis=1, keepdims=True)
+    
+    # Always make motif_2 longer
+    if align_to_longer and len(motif_1) > len(motif_2):
+        motif_1, motif_2 = motif_2, motif_1
+    
+    # Pad motif_2 by len(motif_1) - 1 on either side
+    orig_motif_2_len = len(motif_2)
+    pad_size = len(motif_1) - 1
+    motif_2 = np.pad(motif_2, ((pad_size, pad_size), (0, 0)))
+    
+    if average:
+        # Compute overlap sizes
+        overlap_sizes = np.empty(orig_motif_2_len + pad_size)
+        overlap_sizes[:pad_size] = np.arange(1, len(motif_1))
+        overlap_sizes[-pad_size:] = np.flip(np.arange(1, len(motif_1)))
+        overlap_sizes[pad_size:-pad_size] = len(motif_1)
+    
+    # Compute similarities across all sliding windows
+    scores = np.empty(orig_motif_2_len + pad_size)
+    for i in range(orig_motif_2_len + pad_size):
+        scores[i] = np.sum(motif_1 * motif_2[i : i + len(motif_1)])
+        
+    best_ind = np.argmax(scores)
+    if average:
+        scores = scores / overlap_sizes
+    return scores[best_ind], best_ind - pad_size
+
+
+def create_motif_similarity_matrix(motifs, motifs_2=None, show_progress=True):
+    """
+    Create an N x N similarity matrix for the N motifs in `motifs`. If `motifs_2`
+    is given (a list of M motifs), constructs and N x M similarity matrix.
+    """
+    if motifs_2:
+        num_a, num_b = len(motifs), len(motifs_2)
+        sim_matrix = np.empty((num_a, num_b))
+        t_iter = tqdm.notebook.trange(num_a) if show_progress else range(num_a)
+        for i in t_iter:
+            for j in range(num_b):
+                sim, _ = motif_similarity_score(motifs[i], motifs_2[j])
+                sim_matrix[i, j] = sim
+        return sim_matrix
+    else:
+        num_motifs = len(motifs)
+        sim_matrix = np.empty((num_motifs, num_motifs))
+        t_iter = tqdm.notebook.trange(num_motifs) if show_progress else range(num_motifs)
+        for i in t_iter:
+            for j in range(i, num_motifs):
+                sim, _ = motif_similarity_score(motifs[i], motifs[j])
+                sim_matrix[i, j] = sim
+                sim_matrix[j, i] = sim
+        return sim_matrix
+
+
+def aggregate_motifs(motifs):
+    """
+    Aggregates a list of L x 4 (not all the same L) motifs into a single
+    L x 4 motif.
+    """
+    # Compute similarity matrix
+    sim_matrix = create_motif_similarity_matrix(motifs, show_progress=False)
+
+    # Sort motifs by how similar it is to everyone else
+    inds = np.flip(np.argsort(np.sum(sim_matrix, axis=0)))
+    
+    # Have the consensus start with the most similar
+    consensus = np.zeros_like(motifs[inds[0]])
+    consensus = consensus + motifs[inds[0]]
+    
+    # For each successive motif, add it into the consensus
+    for i in inds[1:]:
+        motif = motifs[i]
+        _, index = motif_similarity_score(motif, consensus, align_to_longer=False)
+        if index >= 0:
+            start, end = index, index + len(motif)
+            consensus[start:end] = consensus[start:end] + motif[:len(consensus) - index]
+        else:
+            end = len(motif) + index
+            consensus[:end] = consensus[:end] + motif[-index:-index + len(consensus)]
+    return consensus / len(motifs)
