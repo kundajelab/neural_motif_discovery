@@ -16,9 +16,9 @@ def import_tfmodisco_hits(hits_bed):
         hits_bed, sep="\t", header=None, index_col=False,
         names=[
             "chrom", "start", "end", "key", "strand", "peak_index",
-            "imp_total_score", "imp_frac_score", "imp_ic_avg_score", "agg_sim",
-            "mod_delta", "mod_precision", "mod_percentile",
-            "fann_perclasssum_perc", "fann_perclassavg_perc"
+            "imp_total_signed_score", "imp_total_score", "imp_frac_score",
+            "imp_ic_avg_score", "agg_sim", "mod_delta", "mod_precision",
+            "mod_percentile", "fann_perclasssum_perc", "fann_perclassavg_perc"
         ]
     )
     return hit_table
@@ -285,6 +285,7 @@ def main(
     # For each hit, compute the total absolute importance, fraction absolute
     # importance, and IC-weighted importance average
     match_table["imp_total_score"] = np.nan
+    match_table["imp_total_signed_score"] = np.nan
     match_table["imp_ic_avg_score"] = np.nan
     score_length = act_scores_matched.shape[1]
     for i, row in match_table.iterrows():
@@ -297,6 +298,7 @@ def main(
             row["example_index"], row["score_start"]:row["score_end"]
         ], axis=1)  # Flatten from L x 4 to L-array
         match_table.loc[i, "imp_total_score"] = np.sum(np.abs(scores))
+        match_table.loc[i, "imp_total_signed_score"] = np.sum(scores)
 
         ic = ic_dict[row["key"]]
         if row["strand"] == "-":
@@ -316,9 +318,9 @@ def main(
     # Re-order columns (and drop a few) before saving the result
     match_table = match_table[[
         "chrom", "start", "end", "key", "strand", "peak_index",
-        "imp_total_score", "imp_frac_score", "imp_ic_avg_score", "agg_sim",
-        "mod_delta", "mod_precision", "mod_percentile", "fann_perclasssum_perc",
-        "fann_perclassavg_perc"
+        "imp_total_signed_score", "imp_total_score", "imp_frac_score",
+        "imp_ic_avg_score", "agg_sim", "mod_delta", "mod_precision",
+        "mod_percentile", "fann_perclasssum_perc", "fann_perclassavg_perc"
     ]]
     match_table.to_csv(
         os.path.join(outdir, "tfm_matches.bed"), sep="\t", header=False,
