@@ -154,10 +154,19 @@ def create_motif_similarity_matrix(motifs, motifs_2=None, show_progress=True):
         return sim_matrix
 
 
-def aggregate_motifs(motifs):
+def aggregate_motifs(motifs, return_inds=False):
     """
     Aggregates a list of L x 4 (not all the same L) motifs into a single
-    L x 4 motif.
+    L x 4 motif. If `return_inds` is True, also return a pair of lists of
+    pairs:
+        const_inds: [(s1, e1), (s2, e2), ...]
+        agg_inds: [(s1, e1), (s2, e2), ...]
+    Each pair in `const_inds` corresponds to the start/end of which part of
+    the constituent motif was used in the aggregate. Each pair in `agg_inds`
+    is the start/end of which part of the aggregate includes that constituent
+    motif. Note that corresponding pairs in `const_ind` and `agg_inds` are
+    guaranteed to be the same length. The start/end includes the start, but not
+    the end index.
     """
     # Compute similarity matrix
     sim_matrix = create_motif_similarity_matrix(motifs, show_progress=False)
@@ -168,7 +177,11 @@ def aggregate_motifs(motifs):
     # Have the consensus start with the most similar
     consensus = np.zeros_like(motifs[inds[0]])
     consensus = consensus + motifs[inds[0]]
-    
+    if return_inds:
+        const_inds, agg_inds = [None] * len(motifs), [None] * len(motifs)
+        const_inds[inds[0]] = (0, len(consensus))
+        agg_inds[inds[0]] = (0, len(consensus))
+        
     # For each successive motif, add it into the consensus
     for i in inds[1:]:
         motif = motifs[i]
@@ -176,7 +189,38 @@ def aggregate_motifs(motifs):
         if index >= 0:
             start, end = index, index + len(motif)
             consensus[start:end] = consensus[start:end] + motif[:len(consensus) - index]
+            if return_inds:
+                const_inds[i] = (0, min(len(consensus) - index, len(motif)))
+                agg_inds[i] = (start, min(end, len(consensus)))
         else:
             end = len(motif) + index
             consensus[:end] = consensus[:end] + motif[-index:-index + len(consensus)]
+            if return_inds:
+                const_inds[i] = (-index, min(-index + len(consensus), len(motif)))
+                agg_inds[i] = (0, min(end, len(consensus)))
+                
+    if return_inds:
+        return consensus / len(motifs), (const_inds, agg_inds)
+    return consensus / len(motifs)
+
+
+def aggregate_motifs_from_inds(motifs, const_inds, agg_inds):
+    """
+    Aggregates a list of L x 4 (not all the same L) motifs into a single
+    L x 4 motif. `const_inds` and `agg_inds` are as returned by
+    `aggregate_motifs`.
+    """
+    assert len(motifs) == len(const_inds)
+    assert len(const_inds) == len(agg_inds)
+    assert all([const_inds[i][1] - const_inds[i][0] == agg_inds[i][1] - agg_inds[i][0] for i in range(len(const_inds))])
+    
+    # First find the longest aggregate interval, let that be the motif length
+    max_length = max([end - start for start, end in agg_inds])
+    
+    consensus = np.zeros((max_length, 4))
+    
+    for i in range(len(const_inds)):
+        consensus[agg_inds[i][0]:agg_inds[i][1]] = \
+            consensus[agg_inds[i][0]:agg_inds[i][1]] + motifs[i][const_inds[i][0]:const_inds[i][1]]
+        
     return consensus / len(motifs)
