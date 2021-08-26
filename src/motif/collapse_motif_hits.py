@@ -28,7 +28,7 @@ def split_bed_by_key(input_bed, key_col):
     return paths
 
 
-def collapse_by_merging(input_bed, score_col, outfile=None):
+def collapse_by_merging(input_bed, score_col, max_dist=0, outfile=None):
     """
     Collapses all overlapping motif hits in the given BED file. The coordinates
     of all overlapping hits are merged, but the features of this resulting
@@ -37,6 +37,8 @@ def collapse_by_merging(input_bed, score_col, outfile=None):
     Arguments:
         `input_bed`: path to input BED to collapse
         `score_col`: index of column (zero-indexed) to use for the score
+        `max_dist`: maximum distance between endpoints to be considered an
+            overlap; defaults to 0; negative numbers require more overlap
         `outfile`: where to output the output BED; by default writes to stdout
     """
     if outfile:
@@ -51,6 +53,7 @@ def collapse_by_merging(input_bed, score_col, outfile=None):
     with open(temp_file, "w") as f:
         comm = ["bedtools", "sort", "-i", input_bed]
         comm += ["|", "bedtools", "merge"]
+        comm += ["-d", str(max_dist)]
         comm += ["-c", ",".join([str(i + 4) for i in range(num_cols)])]
         comm += ["-o", ",".join(["collapse"] * num_cols)]
         subprocess.check_call(" ".join(comm), shell=True, stdout=f)
@@ -73,7 +76,7 @@ def collapse_by_merging(input_bed, score_col, outfile=None):
     os.remove(temp_file)
 
 
-def collapse_by_selecting(input_bed, score_col, outfile=None):
+def collapse_by_selecting(input_bed, score_col, max_dist=0, outfile=None):
     """
     Collapses all overlapping motif hits in the given BED file. For overlapping
     hits, only the hit with the highest score (as determined by the score column
@@ -82,6 +85,8 @@ def collapse_by_selecting(input_bed, score_col, outfile=None):
     Arguments:
         `input_bed`: path to input BED to collapse
         `score_col`: index of column (zero-indexed) to use for the score
+        `max_dist`: maximum distance between endpoints to be considered an
+            overlap; defaults to 0; negative numbers require more overlap
         `outfile`: where to output the output BED; by default writes to stdout
     Writes the new BED to stdout.
     """
@@ -109,6 +114,7 @@ def collapse_by_selecting(input_bed, score_col, outfile=None):
     with open(temp_file, "w") as f:
         comm = ["bedtools", "sort", "-i", input_bed_named]
         comm += ["|", "bedtools", "merge"]
+        comm += ["-d", str(max_dist)]
         comm += ["-c", ",".join([str(i + 4) for i in range(num_cols)])]
         comm += ["-o", ",".join(["collapse"] * num_cols)]
         subprocess.check_call(" ".join(comm), shell=True, stdout=f)
@@ -154,7 +160,14 @@ def collapse_by_selecting(input_bed, score_col, outfile=None):
     "-k", "--key-col", type=int, default=3,
     help="The (0-indexed) index of the column containing motif key; only used if -s is specified"
 )
-def main(input_bed, score_col, outfile, merge_coords, separate_motifs, key_col):
+@click.option(
+    "-d", "--max-dist", type=int, default=0,
+    help="The maximum distance between interval endpoints to be considered an overlap; this may be positive or negative, and follows the definition in `bedtools merge`"
+)
+def main(
+    input_bed, score_col, outfile, merge_coords, separate_motifs, key_col,
+    max_dist
+):
     """
     Collapses all motif hits in the given BED file, collapsing all other columns
     by keeping the entry with the highest score in the given score column. Score
@@ -170,7 +183,9 @@ def main(input_bed, score_col, outfile, merge_coords, separate_motifs, key_col):
         out_shard_paths = {}
         for key in in_shard_paths:
             out_shard_paths[key] = tempfile.mkstemp()[1]
-            collapse_func(in_shard_paths[key], score_col, out_shard_paths[key])
+            collapse_func(
+                in_shard_paths[key], score_col, max_dist, out_shard_paths[key]
+            )
 
         # Collate all results into one file
         if outfile:
@@ -186,7 +201,7 @@ def main(input_bed, score_col, outfile, merge_coords, separate_motifs, key_col):
         if outfile:
             out_f.close()
     else:
-        collapse_func(input_bed, score_col, outfile)
+        collapse_func(input_bed, score_col, max_dist, outfile)
 
 
 if __name__ == "__main__":

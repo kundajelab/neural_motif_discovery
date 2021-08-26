@@ -2,8 +2,8 @@ import os
 import numpy as np
 import pandas as pd
 from modisco.hit_scoring import densityadapted_hitscoring
+from modisco.util import compute_per_position_ic
 import tfmodisco.run_tfmodisco as run_tfmodisco
-import motif.read_motifs as read_motifs
 import click
 
 def import_tfmodisco_hits(hits_bed):
@@ -64,6 +64,7 @@ def main(
     input_length, center_cut_size, keep_non_acgt, min_ic, metacluster_ind,
     pattern_inds
 ):
+    assert metacluster_ind in (0, 1)
     if pattern_inds is not None:
         pattern_inds = [int(x) for x in pattern_inds.split(",")]
 
@@ -140,21 +141,23 @@ def main(
         pattern_inds = list(range(len(patterns)))
     else:
         patterns = [patterns[i] for i in pattern_inds]
+
+    bg_freq = np.mean(one_hot_seqs_matched, axis=(0, 1))
         
     # Verify that every pattern has sufficiently high IC
     for pattern in patterns:
         pfm = pattern["sequence"].fwd
-        ic = read_motifs.pfm_info_content(pfm)
-        pass_inds = np.where(ic >= min_ic)[0]
-        assert pass_inds.size > 0, "The given IC threshold results in an empty motif"
+        ic = compute_per_position_ic(pfm, bg_freq, 0.001)
+        assert np.sum(ic >= min_ic) > 0, "The given IC threshold results in an empty motif"
 
     # Instantiate the hit scorer
     hit_scorer = densityadapted_hitscoring.MakeHitScorer(
         patterns=patterns,
         target_seqlet_size=25,
-        bg_freq=np.mean(one_hot_seqs_matched, axis=(0, 1)),
-        task_names_and_signs=[("task0", 1)],
-        n_cores=10
+        bg_freq=bg_freq,
+        task_names_and_signs=[("task0", 1 if metacluster_ind == 0 else -1)],
+        n_cores=10,
+        additional_seqletscorer_kwargs={"ic_trim_threshold": min_ic}
     )
     
     # Set seqlet identification method
@@ -251,7 +254,7 @@ def main(
     for i, pattern in enumerate(hit_patterns):
         motif_key = motif_keys[i]
         pfm = pattern["sequence"].fwd
-        ic = read_motifs.pfm_info_content(pfm)
+        ic = compute_per_position_ic(pfm, bg_freq, 0.001)
         pass_inds = np.where(ic >= min_ic)[0]
         if not pass_inds.size:
             continue

@@ -2,10 +2,10 @@ printf "Getting all jobs that were not successful\n"
 notsuccessful=$(kubectl get jobs --field-selector status.successful!=1 | awk 'NR>1{print $1}')
 
 printf "Getting jobs for pods that are still Running\n"
-running=$(kubectl get pods --field-selector status.phase=Running | awk 'NR>1{print substr($1, 1, length($1) - 6)}')
+running=$(kubectl get pods --field-selector status.phase=Running | awk 'NR>1{print substr($1, 1, length($1) - 5)}' | sed 's/-$//')
 
 printf "Getting jobs for pods that are still Pending\n"
-pending=$(kubectl get pods --field-selector status.phase=Pending | awk 'NR>1{print substr($1, 1, length($1) - 6)}')
+pending=$(kubectl get pods --field-selector status.phase=Pending | awk 'NR>1{print substr($1, 1, length($1) - 5)}' | sed 's/-$//')
 
 printf "Selecting jobs that are failed (i.e. not yet successful, and not Running or Pending)\n"
 failed=$(comm -23 <(printf "$notsuccessful" | sort) <(printf "$running\n$pending" | sort))
