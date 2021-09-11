@@ -224,3 +224,12 @@ def aggregate_motifs_from_inds(motifs, const_inds, agg_inds):
             consensus[agg_inds[i][0]:agg_inds[i][1]] + motifs[i][const_inds[i][0]:const_inds[i][1]]
         
     return consensus / len(motifs)
+
+
+def purine_rich_motif(motif):
+    """
+    Flip motif to be the purine-rich orientation
+    """
+    if np.sum(motif[:, [0, 2]]) < 0.5 * np.sum(motif):
+        return np.flip(motif, axis=(0, 1))
+    return motif
