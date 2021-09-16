@@ -154,7 +154,7 @@ def create_motif_similarity_matrix(motifs, motifs_2=None, show_progress=True):
         return sim_matrix
 
 
-def aggregate_motifs(motifs, return_inds=False):
+def aggregate_motifs(motifs, return_inds=False, revcomp=True):
     """
     Aggregates a list of L x 4 (not all the same L) motifs into a single
     L x 4 motif. If `return_inds` is True, also return a pair of lists of
@@ -166,7 +166,13 @@ def aggregate_motifs(motifs, return_inds=False):
     is the start/end of which part of the aggregate includes that constituent
     motif. Note that corresponding pairs in `const_ind` and `agg_inds` are
     guaranteed to be the same length. The start/end includes the start, but not
-    the end index.
+    the end index. If `revcomp` is True, then consider merging the reverse
+    complement of motifs, depending on which is more similar. If the reverse
+    complement of a motif is merged, the `const_inds` of that motif will be
+    negative (i.e. for (-1, -5), flip the motif then take the slice [1:5]).
+    Note that if `revcomp` is True, then the resulting motif's orientation
+    will match the orientation of the constituent motif that is most similar
+    to the others.
     """
     # Compute similarity matrix
     sim_matrix = create_motif_similarity_matrix(motifs, show_progress=False)
@@ -185,18 +191,27 @@ def aggregate_motifs(motifs, return_inds=False):
     # For each successive motif, add it into the consensus
     for i in inds[1:]:
         motif = motifs[i]
-        _, index = motif_similarity_score(motif, consensus, align_to_longer=False)
+        match_score, index = motif_similarity_score(motif, consensus, align_to_longer=False)
+        sign = +1
+        if revcomp:
+            rc_motif = np.flip(motif)
+            rc_match_score, rc_index = motif_similarity_score(rc_motif, consensus, align_to_longer=False)
+            if rc_match_score > match_score:
+                # Use the reverse-complement motif and index for alignment
+                motif, index = rc_motif, rc_index
+                sign = -1
+
         if index >= 0:
             start, end = index, index + len(motif)
             consensus[start:end] = consensus[start:end] + motif[:len(consensus) - index]
             if return_inds:
-                const_inds[i] = (0, min(len(consensus) - index, len(motif)))
+                const_inds[i] = (0, min(len(consensus) - index, len(motif)) * sign)
                 agg_inds[i] = (start, min(end, len(consensus)))
         else:
             end = len(motif) + index
             consensus[:end] = consensus[:end] + motif[-index:-index + len(consensus)]
             if return_inds:
-                const_inds[i] = (-index, min(-index + len(consensus), len(motif)))
+                const_inds[i] = (-index * sign, min(-index + len(consensus), len(motif)) * sign)
                 agg_inds[i] = (0, min(end, len(consensus)))
                 
     if return_inds:
@@ -212,7 +227,10 @@ def aggregate_motifs_from_inds(motifs, const_inds, agg_inds):
     """
     assert len(motifs) == len(const_inds)
     assert len(const_inds) == len(agg_inds)
-    assert all([const_inds[i][1] - const_inds[i][0] == agg_inds[i][1] - agg_inds[i][0] for i in range(len(const_inds))])
+    assert all([
+        abs(const_inds[i][1] - const_inds[i][0]) == agg_inds[i][1] - agg_inds[i][0]
+        for i in range(len(const_inds))
+    ])
     
     # First find the longest aggregate interval, let that be the motif length
     max_length = max([end - start for start, end in agg_inds])
@@ -220,8 +238,14 @@ def aggregate_motifs_from_inds(motifs, const_inds, agg_inds):
     consensus = np.zeros((max_length, 4))
     
     for i in range(len(const_inds)):
+        motif = motifs[i]
+        const_start, const_end = const_inds[i]
+        if const_start < 0 or const_end < 0:
+            # Flip to reverse complement
+            motif = np.flip(motif)
+            const_start, const_end = -const_start, -const_end
         consensus[agg_inds[i][0]:agg_inds[i][1]] = \
-            consensus[agg_inds[i][0]:agg_inds[i][1]] + motifs[i][const_inds[i][0]:const_inds[i][1]]
+            consensus[agg_inds[i][0]:agg_inds[i][1]] + motif[const_start:const_end]
         
     return consensus / len(motifs)
 
