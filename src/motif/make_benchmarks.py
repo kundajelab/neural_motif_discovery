@@ -3,29 +3,71 @@ import subprocess
 import click
 import json
 import pandas as pd
+import numpy as np
+import pyfaidx
+import pyBigWig
 
 MOTIF_SRC_DIR = "/users/amtseng/tfmodisco/src/motif/"
 
-def extract_peak_intervals(peak_bed_paths, save_path, peak_limit=None):
+def get_bigwig_paths(file_specs):
+    """
+    From the import file specs dictionary for the TF, attempts to get the paths
+    to the signal BigWigs. Raises an error if they are not found.
+    """
+    signal_bigwig_paths = []
+    peak_bed_paths = file_specs["peak_beds"]
+    for peak_bed_path in peak_bed_paths:
+        tf_name, exp_id, cell_type = \
+            os.path.basename(peak_bed_path).split("_")[:3]
+
+        base_path = os.path.join(
+            "/users/amtseng/tfmodisco/data/raw/ENCODE",
+            tf_name,
+            "tf_chipseq"
+        )
+        head = "%s_%s_signal-pval_" % (exp_id, cell_type)
+
+        matches = [
+            item for item in os.listdir(base_path) if
+            item.startswith(head) and item.endswith(".bw")
+        ]
+        assert len(matches) == 1
+
+        signal_bigwig_paths.append(os.path.join(base_path, matches[0]))
+    return signal_bigwig_paths
+
+
+def extract_peak_sequences(
+    peak_bed_paths, out_path, reference_fasta, peak_limit=None,
+    peak_center_size=0, signal_bigwig_paths=None
+):
     """
     Imports a set of peaks from a list of peak BEDs in ENCODE NarrowPeak format,
     and saves them as a single BED. The set of peaks will be deduplicated, and
-    if specifided, only the top peaks by signal strength will be retained.
+    if specified, only the top peaks by signal strength will be retained.
     Arguments:
         `peak_bed_paths`: a list of paths to peak BEDs
-        `save_path`: path to save the deduplicated peaks
+        `out_path`: path to save the output Fasta
+        `reference_fasta`: path to reference genome Fasta
         `peak_limit`: if specified, limit the saved peaks to this number of
             peaks, sorted by signal value
+        `peak_center_size`: if specified, cut off peaks to be this size,
+            centered around the summit
+        `signal_bigwig_paths`: if specified, the name of each Fasta sequence
+            will be a space-delimited list of the -log p-value of the signal
+            at each base; this is a parallel list to `peak_bed_paths`
     """
     peaks_list = []
-    for peak_bed_path in peak_bed_paths:
-        peaks_list.append(pd.read_csv(
+    for i, peak_bed_path in enumerate(peak_bed_paths):
+        table = pd.read_csv(
             peak_bed_path, sep="\t", header=None,  # Infer compression
             names=[
                 "chrom", "peak_start", "peak_end", "name", "score",
                 "strand", "signal", "pval", "qval", "summit_offset"
             ]
-        ))
+        )
+        table["bed_index"] = i
+        peaks_list.append(table)
     peaks = pd.concat(peaks_list)
     peaks = peaks.sort_values(by="signal", ascending=False)
     peaks = peaks.drop_duplicates(["chrom", "peak_start", "peak_end"])
@@ -33,25 +75,36 @@ def extract_peak_intervals(peak_bed_paths, save_path, peak_limit=None):
     if peak_limit > 0:
         peaks = peaks.head(peak_limit)
 
-    peaks.to_csv(save_path, sep="\t", header=False, index=False)
+    fasta_reader = pyfaidx.Fasta(reference_fasta)
+    if signal_bigwig_paths:
+        bigwig_readers = [
+            pyBigWig.open(path, "r") for path in signal_bigwig_paths
+        ]
 
+    with open(out_path, "w") as f:
+        for _, row in peaks.iterrows():
+            chrom, start, end = row["chrom"], row["peak_start"], row["peak_end"]
+            if peak_center_size > 0:
+                summit = row["summit_offset"]
+                center = start + summit
+                start = center - (peak_center_size // 2)
+                end = start + peak_center_size 
+            seq = fasta_reader[chrom][start:end].seq
+            if signal_bigwig_paths:
+                signal = bigwig_readers[row["bed_index"]].values(
+                    chrom, start, end
+                )
+                signal = np.clip(signal, 0, None)  # Remove any < 0
+                seq_name = " ".join(signal.astype(str))
+            else:
+                seq_name = "%s:%d-%d" % (chrom, start, end)
+            f.write(">" + seq_name + "\n")
+            f.write(seq + "\n")
 
-def bed_to_fasta(bed_path, fasta_path, reference_fasta, peak_center_size=0):
-    """
-    Converts a BED into a Fasta.
-    Arguments:
-        `bed_path`: path to BED file to convert
-        `fasta_path`: path to output Fasta file
-        `reference_fasta`: path to reference genome Fasta
-        `peak_center_size`: if specified, cut off peaks to be this size,
-            centered around the summit
-    """
-    comm = ["python", os.path.join(MOTIF_SRC_DIR, "bed_to_fasta.py")]
-    comm += ["-r", reference_fasta]
-    comm += ["-l", str(peak_center_size)]
-    comm += [bed_path, fasta_path]
-    proc = subprocess.Popen(comm)
-    proc.wait()
+    if signal_bigwig_paths:
+        for reader in bigwig_readers:
+            reader.close()
+    fasta_reader.close()
 
 
 def run_benchmark(fasta_path, out_dir, benchmark_type):
@@ -91,7 +144,7 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
 )
 @click.option(
     "-f", "--files-spec-path", default=None,
-    help="Path to TF's file specifications JSON; required for peak source"
+    help="Path to TF's file specifications JSON; required for peak source or signal BigWig"
 )
 @click.option(
     "-i", "--task-index", default=None, type=int,
@@ -106,12 +159,16 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
     help="Comma-separated list of benchmarks to run; defaults to MEME, HOMER, and DiChIPMunk"
 )
 @click.option(
-    "-l", "--peak-limit", default=1000, type=int,
-    help="Maximum number of peaks to use based on signal strength; set to 0 or negative for unlimited"
+    "-l", "--peak-limit", default=-1, type=int,
+    help="Maximum number of peaks to use based on signal strength; by default does not limit"
 )
 @click.option(
     "-c", "--peak-center-size", default=200,
     help="Cut off peaks to this length around the summit; set to 0 for no cut-off"
+)
+@click.option(
+    "-s", "--include-signal", is_flag=True,
+    help="If specified, extract the peak signal at each position and use that as the name for each Fasta sequence; only useful for DiChIPMunk"
 )
 @click.option(
     "-r", "--reference-fasta", default="/users/amtseng/genomes/hg38.fasta",
@@ -119,7 +176,8 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
 )
 def main(
     out_dir, input_type, files_spec_path, task_index, seqlets_path,
-    benchmark_types, peak_limit, peak_center_size, reference_fasta
+    benchmark_types, peak_limit, peak_center_size, include_signal,
+    reference_fasta
 ):
     """
     Runs motif benchmarks (i.e. MEME, MEME-ChIP, HOMER, and/or DiChIPMunk) on a
@@ -136,19 +194,28 @@ def main(
         # Create the peaks Fasta, perhaps limited
         peaks_name = "peaks" if task_index is None \
             else "peaks_task%d" % int(task_index)
-        bed_path = os.path.join(out_dir, peaks_name + ".bed")
         fasta_path = os.path.join(out_dir, peaks_name + ".fasta")
         with open(files_spec_path, "r") as f:
             specs = json.load(f)
             peak_bed_paths = specs["peak_beds"]
+
             if task_index is not None:
                 peak_bed_paths = [peak_bed_paths[task_index]]
-        extract_peak_intervals(peak_bed_paths, bed_path, peak_limit)
-        bed_to_fasta(
-            bed_path, fasta_path, reference_fasta, peak_center_size
+
+            if include_signal:
+                signal_bigwig_paths = get_bigwig_paths(specs)
+                if task_index is not None:
+                    signal_bigwig_paths = [signal_bigwig_paths[task_index]]
+            else:
+                signal_bigwig_paths = None
+
+        extract_peak_sequences(
+            peak_bed_paths, fasta_path, reference_fasta, peak_limit,
+            peak_center_size, signal_bigwig_paths
         )
     else:
         # The unadulterated seqlets Fasta
+        assert not include_signal, "Not yet supported"
         fasta_path = seqlets_path
 
     for benchmark_type in sorted(benchmark_types):
