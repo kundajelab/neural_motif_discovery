@@ -124,7 +124,7 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/processed/`
 	- `BPNet_{Nanog,Oct4,Sox2}_ChIPseq_all_peakints.bed.gz`
 		- Peak BED files extracted from the ChIP-seq importance scores of the BPNet paper
 		- Note that these peaks are all length 1 and centered at the summits
-	- `BPNet_{Nanog,Oct4,Sox2}_ChIPnexus_profiles.h5`
-		- ChIP-nexus profiles in HDF5 format instead of BigWig format
+	- `BPNet_{Nanog,Oct4,Sox2}_{ChIPnexus,ChIPseq}_profiles.h5`
+		- ChIP-nexus or ChIP-seq profiles in HDF5 format instead of BigWig format
 	- `BPNet_motif_hits/`
 		- Contains extracted motif hits from `BPNet_motif_hits_annotated.parq`
