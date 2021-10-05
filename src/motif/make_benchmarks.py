@@ -109,11 +109,13 @@ def extract_peak_sequences(
 
 def run_benchmark(fasta_path, out_dir, benchmark_type):
     """
-    Runs a benchmark: MEME, HOMER, or DiChIPMunk.
+    Runs a benchmark: MEME, MEME-ChIP, HOMER, or DiChIPMunk.
     Arguments:
         `fasta_path`: path to sequence Fasta to run on
-        `out_dir`: results will be saved to `outdir/{meme,homer,dichipmunk}`
-        `benchmark_type`: either "meme", "homer", or "dichipmunk"
+        `out_dir`: results will be saved to
+            `outdir/{benchmark_type}`
+        `benchmark_type`: either "meme", "memechip", "homer", "chipmunk", or
+            "dichipmunk"
     """
     results_dir = os.path.join(out_dir, benchmark_type)
     comm = ["bash"]
@@ -123,8 +125,10 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
         comm += [os.path.join(MOTIF_SRC_DIR, "run_memechip.sh")]
     elif benchmark_type == "homer":
         comm += [os.path.join(MOTIF_SRC_DIR, "run_homer.sh")]
+    elif benchmark_type == "chipmunk":
+        comm += [os.path.join(MOTIF_SRC_DIR, "run_chipmunk.sh")]
     elif benchmark_type == "dichipmunk":
-        comm += [os.path.join(MOTIF_SRC_DIR, "run_dichipmunk.sh")]
+        comm += [os.path.join(MOTIF_SRC_DIR, "run_chipmunk.sh"), "-d"]
     else:
         return
     
@@ -168,7 +172,7 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
 )
 @click.option(
     "-s", "--include-signal", is_flag=True,
-    help="If specified, extract the peak signal at each position and use that as the name for each Fasta sequence; only useful for DiChIPMunk"
+    help="If specified, extract the peak signal at each position and use that as the name for each Fasta sequence; only useful for (Di)ChIPMunk"
 )
 @click.option(
     "-r", "--reference-fasta", default="/users/amtseng/genomes/hg38.fasta",
@@ -180,13 +184,15 @@ def main(
     reference_fasta
 ):
     """
-    Runs motif benchmarks (i.e. MEME, MEME-ChIP, HOMER, and/or DiChIPMunk) on a
-    TF's peaks and/or TF-MoDISco-identified seqlets
+    Runs motif benchmarks (i.e. MEME, MEME-ChIP, HOMER, ChIPMunk, and/or
+    DiChIPMunk) on a TF's peaks and/or TF-MoDISco-identified seqlets
     """
     benchmark_types = list(set(benchmark_types.split(","))) 
 
     for benchmark_type in benchmark_types:
-        assert benchmark_type in ("meme", "memechip", "homer", "dichipmunk")
+        assert benchmark_type in (
+            "meme", "memechip", "homer", "chipmunk", "dichipmunk"
+        )
 
     os.makedirs(out_dir, exist_ok=True)
 
@@ -206,12 +212,19 @@ def main(
                 signal_bigwig_paths = get_bigwig_paths(specs)
                 if task_index is not None:
                     signal_bigwig_paths = [signal_bigwig_paths[task_index]]
+                signal_fasta_path = os.path.join(
+                    out_dir, peaks_name + "_signal.fasta"
+                )
+                extract_peak_sequences(
+                    peak_bed_paths, signal_fasta_path, reference_fasta,
+                    peak_limit, peak_center_size, signal_bigwig_paths
+                )
             else:
                 signal_bigwig_paths = None
 
         extract_peak_sequences(
             peak_bed_paths, fasta_path, reference_fasta, peak_limit,
-            peak_center_size, signal_bigwig_paths
+            peak_center_size  # Use normal naming of sequences
         )
     else:
         # The unadulterated seqlets Fasta
@@ -220,7 +233,10 @@ def main(
 
     for benchmark_type in sorted(benchmark_types):
         print("Running " + benchmark_type.upper())
-        run_benchmark(fasta_path, out_dir, benchmark_type)
+        if include_signal and benchmark_type.endswith("chipmunk"):
+            run_benchmark(signal_fasta_path, out_dir, benchmark_type)
+        else:
+            run_benchmark(fasta_path, out_dir, benchmark_type)
 
 if __name__ == "__main__":
     main()

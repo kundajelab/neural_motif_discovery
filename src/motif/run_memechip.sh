@@ -40,4 +40,4 @@ outdir=$2
 
 mkdir -p $outdir
 
-meme-chip $infasta -meme-p 4 -dna -meme-mod zoops -meme-nmotifs 10 -meme-minw 6 -meme-maxw 50 -order 0 -oc $outdir
+meme-chip $infasta -meme-p 4 -dna -meme-mod zoops -meme-nmotifs 10 -meme-minw 6 -meme-maxw 50 -order 0 -dreme-m 0 -spamo-skip -fimo-skip -oc $outdir
