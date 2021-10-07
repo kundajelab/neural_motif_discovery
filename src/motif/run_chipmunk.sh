@@ -8,7 +8,7 @@ Usage: ${0##*/} [OPTIONS] IN_FASTA OUT_DIR
 Runs ChIPMunk on the input Fasta sequences in 'IN_FASTA' and outputs results
 in 'OUT_DIR'. Note that the name of each sequence in the Fasta must be a space-
 delimited list of positional weights. If '-d' is supplied, run in DiChIPMunk
-mode.
+mode. If '-s' is supplied, the Fasta names are assumed to be peak signals.
 EOF
 }
 
@@ -18,6 +18,10 @@ do
 	case "$1" in
 		-d|--di)
 			dichip=1
+			shift 1
+			;;
+		-s|--signal)
+			signal=1
 			shift 1
 			;;
 		-h|--help)
@@ -49,6 +53,13 @@ else
 	cmdname=ru.autosome.ChIPHorde
 fi
 
+if [[ -e $signal ]]
+then
+	fastaprefix=p  # "peak positional preferences"
+else
+	fastaprefix=s  # "simple"
+fi
+
 infile=$1
 outdir=$2
 
@@ -59,4 +70,4 @@ length=10:12
 alllengths=$(printf "$length%.0s," {1..9})
 alllengths=${alllengths}$length
 
-java -cp $chipmunkpath $cmdname $alllengths mask yes 1.0 p:$infile 200 20 1 4 random auto 1> $outdir/results.txt 2> >(tee $outdir/log.txt >&2)
+java -cp $chipmunkpath $cmdname $alllengths mask yes 1.0 $fastaprefix:$infile 200 20 1 4 random auto 1> $outdir/results.txt 2> >(tee $outdir/log.txt >&2)

@@ -107,16 +107,24 @@ def extract_peak_sequences(
     fasta_reader.close()
 
 
-def run_benchmark(fasta_path, out_dir, benchmark_type):
+def run_benchmark(fasta_path, out_dir, benchmark_type, fasta_names="coord"):
     """
-    Runs a benchmark: MEME, MEME-ChIP, HOMER, or DiChIPMunk.
+    Runs a benchmark: MEME, MEME-ChIP, HOMER, ChIPMunk, or DiChIPMunk.
     Arguments:
         `fasta_path`: path to sequence Fasta to run on
         `out_dir`: results will be saved to
             `outdir/{benchmark_type}`
         `benchmark_type`: either "meme", "memechip", "homer", "chipmunk", or
             "dichipmunk"
+        `fasta_names`: the type of names in the Fasta; it can be "coord" (i.e.
+            just the coordinate), or "signal" (i.e. the name of a sequence is
+            the space-delimited signal at each base); "signal" is only used if
+            the benchmark type is ChIPMunk or DiChIPMunk
     """
+    assert fasta_names in ("coord", "signal")
+    if fasta_names == "signal":
+        assert benchmark_type.endswith("chipmunk")
+
     results_dir = os.path.join(out_dir, benchmark_type)
     comm = ["bash"]
     if benchmark_type == "meme":
@@ -131,6 +139,9 @@ def run_benchmark(fasta_path, out_dir, benchmark_type):
         comm += [os.path.join(MOTIF_SRC_DIR, "run_chipmunk.sh"), "-d"]
     else:
         return
+
+    if fasta_names == "signal":
+        comm += ["-s"]
     
     comm += [fasta_path, results_dir]
     proc = subprocess.Popen(comm)
@@ -200,7 +211,9 @@ def main(
         # Create the peaks Fasta, perhaps limited
         peaks_name = "peaks" if task_index is None \
             else "peaks_task%d" % int(task_index)
-        fasta_path = os.path.join(out_dir, peaks_name + ".fasta")
+
+        limit_name = "_top%d" % peak_limit if peak_limit > 0 else ""
+        fasta_path = os.path.join(out_dir, peaks_name + limit_name + ".fasta")
         with open(files_spec_path, "r") as f:
             specs = json.load(f)
             peak_bed_paths = specs["peak_beds"]
@@ -213,7 +226,7 @@ def main(
                 if task_index is not None:
                     signal_bigwig_paths = [signal_bigwig_paths[task_index]]
                 signal_fasta_path = os.path.join(
-                    out_dir, peaks_name + "_signal.fasta"
+                    out_dir, peaks_name + limit_name + "_signal.fasta"
                 )
                 extract_peak_sequences(
                     peak_bed_paths, signal_fasta_path, reference_fasta,
