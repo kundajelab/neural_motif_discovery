@@ -80,7 +80,10 @@ def import_profiles(preds_path):
     return true_profs, pred_profs, coords
 
 
-def motif_similarity_score(motif_1, motif_2, average=True, align_to_longer=True):
+def motif_similarity_score(
+    motif_1, motif_2, average=True, align_to_longer=True, mean_normalize=True,
+    l2_normalize=True
+):
     """
     Computes the motif similarity score between two motifs by
     the summed cosine similarity, maximized over all possible sliding
@@ -91,15 +94,13 @@ def motif_similarity_score(motif_1, motif_2, average=True, align_to_longer=True)
     for the index computation (if tie use `motif_2`). Otherwise, always use
     `motif_2`.
     """
-    # L2-normalize
-    motif_1 = motif_1 - np.mean(motif_1, axis=1, keepdims=True)
-    motif_2 = motif_2 - np.mean(motif_2, axis=1, keepdims=True)
-    motif_1 = motif_1 / np.sqrt(np.sum(motif_1 * motif_1, axis=1, keepdims=True))
-    motif_2 = motif_2 / np.sqrt(np.sum(motif_2 * motif_2, axis=1, keepdims=True))
-    
-    # Mean-normalize
-    motif_1 = motif_1 - np.mean(motif_1, axis=1, keepdims=True)
-    motif_2 = motif_2 - np.mean(motif_2, axis=1, keepdims=True)
+    if mean_normalize:
+        motif_1 = motif_1 - np.mean(motif_1, axis=1, keepdims=True)
+        motif_2 = motif_2 - np.mean(motif_2, axis=1, keepdims=True)
+       
+    if l2_normalize:
+        motif_1 = motif_1 / np.sqrt(np.sum(motif_1 * motif_1, axis=1, keepdims=True))
+        motif_2 = motif_2 / np.sqrt(np.sum(motif_2 * motif_2, axis=1, keepdims=True))
     
     # Always make motif_2 longer
     if align_to_longer and len(motif_1) > len(motif_2):
@@ -128,7 +129,7 @@ def motif_similarity_score(motif_1, motif_2, average=True, align_to_longer=True)
     return scores[best_ind], best_ind - pad_size
 
 
-def create_motif_similarity_matrix(motifs, motifs_2=None, show_progress=True):
+def create_motif_similarity_matrix(motifs, motifs_2=None, show_progress=True, **kwargs):
     """
     Create an N x N similarity matrix for the N motifs in `motifs`. If `motifs_2`
     is given (a list of M motifs), constructs and N x M similarity matrix.
@@ -148,7 +149,7 @@ def create_motif_similarity_matrix(motifs, motifs_2=None, show_progress=True):
         t_iter = tqdm.notebook.trange(num_motifs) if show_progress else range(num_motifs)
         for i in t_iter:
             for j in range(i, num_motifs):
-                sim, _ = motif_similarity_score(motifs[i], motifs[j])
+                sim, _ = motif_similarity_score(motifs[i], motifs[j], **kwargs)
                 sim_matrix[i, j] = sim
                 sim_matrix[j, i] = sim
         return sim_matrix
