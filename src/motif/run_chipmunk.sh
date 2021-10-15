@@ -46,14 +46,14 @@ then
 	exit 1
 fi
 
-if [[ -e $dichip ]]
+if [[ $dichip -eq 1 ]]
 then
 	cmdname=ru.autosome.di.ChIPHorde
 else
 	cmdname=ru.autosome.ChIPHorde
 fi
 
-if [[ -e $signal ]]
+if [[ $signal -eq 1 ]]
 then
 	fastaprefix=p  # "peak positional preferences"
 else

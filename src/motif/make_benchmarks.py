@@ -247,7 +247,9 @@ def main(
     for benchmark_type in sorted(benchmark_types):
         print("Running " + benchmark_type.upper())
         if include_signal and benchmark_type.endswith("chipmunk"):
-            run_benchmark(signal_fasta_path, out_dir, benchmark_type)
+            run_benchmark(
+                signal_fasta_path, out_dir, benchmark_type, fasta_names="signal"
+            )
         else:
             run_benchmark(fasta_path, out_dir, benchmark_type)
 
