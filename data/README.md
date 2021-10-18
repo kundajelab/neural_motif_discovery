@@ -33,8 +33,6 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/raw/`
 	- `BPNet_{Nanog,Oct4,Sox2}_{ChIPseq,ChIPnexus}_idr-peaks.bed.gz`, `BPNet_{Nanog,Oct4,Sox2}_ChIPnexus_{neg,pos}.bw`
 		- Original called IDR peaks and read BigWigs from `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/data/chip-seq/` and `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/data/chip-nexus/`
 		- Note that these ChIPseq peaks are not to be confused with the peaks at `/users/amtseng/tfmodisco/data/processed/BPNet/ChIPseq/`, which come from the extracted importance scores
-	- `BPNet_test_preds.pkl`
-		- Saved predictions of test set, copied from `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/output/seq,peaks,OSN,0,10,1,FALSE,same,0.5,64,50,0.004,9,FALSE,[1,50],TRUE,TRUE/preds.test.pkl`
 	- `BPNet_motif_hits_annotated.parq`
 		- Copied from `/oak/stanford/groups/akundaje/avsec/basepair/data/processed/comparison/output/dfi_subset.annotated.v3.parq`
 
@@ -121,6 +119,9 @@ Links to `/mnt/lab_data2/amtseng/tfmodisco/data/processed/`
 		- HOCOMOCO v11 human motifs in MEME format (from [here](https://hocomoco11.autosome.ru/downloads_v11))
 	- `HOCOMOCO_JASPAR_motifs.txt`
 		- Combination of both JASPAR and HOCOMOCO motifs
+
+- `hg38.repeats.bed.gz`
+	- Repeat annotations in hg38, copied from `/oak/stanford/groups/akundaje/manyu/TFBindingPredictionProject/HumanGenome/Repeats/hg38.repeats.bed`
 
 - `BPNet/`
 	- `BPNet_{Nanog,Oct4,Sox2}_ChIPseq_all_peakints.bed.gz`
