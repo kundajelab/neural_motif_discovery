@@ -155,7 +155,7 @@ def create_motif_similarity_matrix(motifs, motifs_2=None, show_progress=True, **
         return sim_matrix
 
 
-def aggregate_motifs(motifs, return_inds=False, revcomp=True):
+def aggregate_motifs(motifs, return_inds=False, revcomp=True, **kwargs):
     """
     Aggregates a list of L x 4 (not all the same L) motifs into a single
     L x 4 motif. If `return_inds` is True, also return a pair of lists of
@@ -176,7 +176,7 @@ def aggregate_motifs(motifs, return_inds=False, revcomp=True):
     to the others.
     """
     # Compute similarity matrix
-    sim_matrix = create_motif_similarity_matrix(motifs, show_progress=False)
+    sim_matrix = create_motif_similarity_matrix(motifs, show_progress=False, **kwargs)
 
     # Sort motifs by how similar it is to everyone else
     inds = np.flip(np.argsort(np.sum(sim_matrix, axis=0)))
@@ -192,11 +192,11 @@ def aggregate_motifs(motifs, return_inds=False, revcomp=True):
     # For each successive motif, add it into the consensus
     for i in inds[1:]:
         motif = motifs[i]
-        match_score, index = motif_similarity_score(motif, consensus, align_to_longer=False)
+        match_score, index = motif_similarity_score(motif, consensus, align_to_longer=False, **kwargs)
         sign = +1
         if revcomp:
             rc_motif = np.flip(motif)
-            rc_match_score, rc_index = motif_similarity_score(rc_motif, consensus, align_to_longer=False)
+            rc_match_score, rc_index = motif_similarity_score(rc_motif, consensus, align_to_longer=False, **kwargs)
             if rc_match_score > match_score:
                 # Use the reverse-complement motif and index for alignment
                 motif, index = rc_motif, rc_index
