@@ -2,114 +2,89 @@ import os
 import subprocess
 import numpy as np
 import pandas as pd
+import pyfaidx
 import motif.read_motifs as read_motifs
+import motif.match_motifs as match_motifs
 import tfmodisco.run_tfmodisco as run_tfmodisco 
 
-def export_motifs(pfms, out_dir):
+def export_motifs(pfms, out_path):
     """
-    Exports motifs to an output directory as PFMs for MOODS.
+    Exports motifs to an output file as a MEME motif file for FIMO.
     Arguments:
         `pfms`: a dictionary mapping keys to N x 4 NumPy arrays (N may be
             different for each PFM); `{key}.pfm` will be the name of each saved
             motif
-        `out_dir`: directory to save each motif
+        `out_path`: path to file to save motifs in MEME format
     """
-    for key, pfm in pfms.items():
-        outfile = os.path.join(out_dir, "%s.pfm" % key)
-        with open(outfile, "w") as f:
-            for i in range(4):
-                f.write(" ".join([str(x) for x in pfm[:, i]]) + "\n")
+    motif_keys = sorted(list(pfms.keys()))
+    match_motifs.export_pfms_to_meme_format(
+        [pfms[key] for key in motif_keys], out_path, names=motif_keys
+    )
 
 
-def run_moods(out_dir, reference_fasta, pval_thresh=0.0001):
+def bed_to_fasta(bed_path, fasta_path, reference_fasta_path):
     """
-    Runs MOODS on every `.pfm` file in `out_dir`. Outputs the results for each
-    PFM into `out_dir/moods_out.csv`.
+    From a three-column BED file, generates a Fasta file where the keys are
+    "{sequence_index}|{chrom}:{start}:{end}".
     Arguments:
-        `out_dir`: directory with PFMs
-        `reference_fasta`: path to reference Fasta to use
-        `pval_thresh`: threshold p-value for MOODS to use
+        `bed_path`: path to input BED files
+        `fasta_path`: path to write Fasta
+        `reference_fasta_path`: path to reference Fasta
     """
-    pfm_files = [p for p in os.listdir(out_dir) if p.endswith(".pfm")]
-    comm = ["moods-dna.py"]
-    comm += ["-m"]
-    comm += [os.path.join(out_dir, pfm_file) for pfm_file in pfm_files]
-    comm += ["-s", reference_fasta]
-    comm += ["-p", str(pval_thresh)]
-    comm += ["-o", os.path.join(out_dir, "moods_out.csv")]
+    fasta_reader = pyfaidx.Fasta(reference_fasta_path)
+    
+    bed = open(bed_path, "r")
+    with open(fasta_path, "w") as fasta:
+        for i, line in enumerate(bed):
+            tokens = line.strip().split("\t")
+            chrom, start, end = tokens[0], int(tokens[1]), int(tokens[2])
+            seq = fasta_reader[chrom][start:end].seq
+            fasta.write(">%d|%s:%d-%d\n" % (i, chrom, start, end))
+            fasta.write(seq + "\n")
+    bed.close()
+
+
+def run_fimo(motif_file, seqs_fasta, out_dir, pval_thresh=0.0001):
+    """
+    Runs FIMO on the given sequences and motifs. Outputs the results into
+    `out_dir/fimo.tsv`.
+    Arguments:
+        `motif_file`: path to query motifs in MEME format
+        `seqs_fasta`: path to Fasta containing sequences to scan; the key of
+            each sequence should be "{peak_index}|{chrom}:{start}:{end}"
+        `out_dir`: directory to output results, including "fimo.tsv"
+        `pval_thresh`: threshold p-value for FIMO to use
+    """
+    comm = ["fimo"]
+    comm += ["--oc", out_dir]
+    comm += ["--thresh", str(pval_thresh)]
+    comm += [motif_file]
+    comm += [seqs_fasta]
     subprocess.check_call(comm)
 
 
-def moods_hits_to_bed(moods_out_csv_path, moods_out_bed_path):
+def fimo_hits_to_bed(fimo_out_csv_path, fimo_out_bed_path):
     """
-    Converts MOODS hits into BED file.
-    """
-    f = open(moods_out_csv_path, "r")
-    g = open(moods_out_bed_path, "w")
-    warn = True
-    for line in f:
-        tokens = line.split(",")
-        try:
-            # The length of the interval is the length of the motif
-            g.write("\t".join([
-                tokens[0].split()[0], tokens[2],
-                str(int(tokens[2]) + len(tokens[5])), tokens[1][:-4], tokens[3],
-                tokens[4]
-            ]) + "\n")
-        except ValueError:
-            # If a line is formatted incorrectly, skip it and warn once
-            if warn:
-                print("Found bad line: " + line)
-                warn = False
-            pass
-        # Note: depending on the Fasta file and version of MOODS, only keep the
-        # first token of the "chromosome"
-    f.close()
-    g.close()
-
-
-def filter_hits_for_peaks(
-    moods_out_bed_path, filtered_hits_path, peak_bed_path
-):
-    """
-    Filters MOODS hits for only those that (fully) overlap a particular set of
-    peaks. `peak_bed_path` must be a BED file; only the first 3 columns are
-    used. A new column is added to the resulting hits: the index of the peak in
-    `peak_bed_path`. If `peak_bed_path` has repeats, the later index is kept.
-    Outputs a bed of the following columns:
+    Converts FIMO hits into BED file. Outputs a bed of the following columns:
         chrom, start, end, key, strand, score, peak_index
     """
-    # First filter using bedtools intersect, keeping track of matches
-    temp_file = filtered_hits_path + ".tmp"
-    comm = ["bedtools", "intersect"]
-    comm += ["-wa", "-wb"]
-    comm += ["-f", "1"]  # Require the entire hit to overlap with peak
-    comm += ["-a", moods_out_bed_path]
-    comm += ["-b", peak_bed_path]
-    with open(temp_file, "w") as f:
-        subprocess.check_call(comm, stdout=f)
-
-    # Create mapping of peaks to indices in `peak_bed_path`
-    peak_table = pd.read_csv(
-        peak_bed_path, sep="\t", header=None, index_col=False,
-        usecols=[0, 1, 2], names=["chrom", "start", "end"]
+    hits_table = pd.read_csv(
+        fimo_out_csv_path, sep="\t", header=0, index_col=False, comment="#"
     )
-    peak_keys = (
-        peak_table["chrom"] + ":" + peak_table["start"].astype(str) + "-" + \
-        peak_table["end"].astype(str)
-    ).values
-    peak_index_map = {k : str(i) for i, k in enumerate(peak_keys)}
-
-    # Convert last three columns to peak index
-    f = open(temp_file, "r")
-    g = open(filtered_hits_path, "w")
-    for line in f:
-        tokens = line.strip().split("\t")
-        g.write("\t".join((tokens[:-3])))
-        peak_index = peak_index_map["%s:%s-%s" % tuple(tokens[-3:])]
-        g.write("\t" + peak_index + "\n")
-    f.close()
-    g.close()
+    s = hits_table["sequence_name"].str.split("|", expand=True)
+    hits_table["peak_index"] = s[0].astype(int)
+    t = s[1].str.split(":", expand=True)
+    hits_table["chrom"] = t[0].astype(str)
+    u = t[1].str.split("-", expand=True)
+    seq_starts = u[0].astype(int)
+    # FIMO coordinates are closed, 1-based
+    hits_table["hit_start"] = hits_table["start"] + seq_starts - 1
+    hits_table["hit_end"] = hits_table["stop"] + seq_starts
+    
+    hits_table[[
+        "chrom", "hit_start", "hit_end", "motif_id", "strand", "score",
+        "peak_index"
+    ]].to_csv(fimo_out_bed_path, sep="\t", header=False, index=False)
 
 
 def compute_hits_importance_scores(
@@ -117,7 +92,7 @@ def compute_hits_importance_scores(
     pfm_dict, out_path
 ):
     """
-    For each MOODS hit, computes measures of the the hit's importance score.
+    For each FIMO hit, computes measures of the the hit's importance score.
     Arguments:
         `hits_bed_path`: path to BED file output by `collapse_hits`
             without the p-value column
@@ -264,9 +239,9 @@ def compute_hits_importance_scores(
     new_hit_table.to_csv(out_path, sep="\t", header=False, index=False)
 
 
-def import_moods_hits(hits_bed):
+def import_fimo_hits(hits_bed):
     """
-    Imports the MOODS hits as a single Pandas DataFrame.
+    Imports the FIMO hits as a single Pandas DataFrame.
     The `key` column is the name of the originating PFM, and `peak_index` is the
     index of the peak file from which it was originally found.
     """
@@ -280,19 +255,19 @@ def import_moods_hits(hits_bed):
     return hit_table
 
 
-def get_moods_hits(
+def get_fimo_hits(
     pfm_dict, reference_fasta, peak_bed_path, shap_scores_hdf5_path,
     hyp_score_key, input_length=None, center_cut_size=400,
-    moods_pval_thresh=0.0001, out_dir=None, remove_intermediates=True
+    fimo_pval_thresh=0.0001, out_dir=None, remove_intermediates=True
 ):
     """
-    From a dictionary of PFMs, runs MOODS and returns the result as a Pandas
+    From a dictionary of PFMs, runs FIMO and returns the result as a Pandas
     DataFrame.
     Arguments:
         `pfm_dict`: a dictionary mapping keys to N x 4 NumPy arrays (N may be
             different for each PFM); the key will be the name of each motif
         `reference_fasta`: path to reference Fasta to use
-        `peak_bed_path`: path to peaks BED file; only keeps MOODS hits from
+        `peak_bed_path`: path to peaks BED file; only calls FIMO hits from
             these intervals; must be in NarrowPeak format
         `shap_scores_hdf5_path`: an HDF5 of DeepSHAP scores of peak regions
             measuring importance
@@ -303,8 +278,8 @@ def get_moods_hits(
         `input_length`: if given, first expand the peaks (centered at summits)
             to this length to match with DeepSHAP scores
         `center_cut_size`: if given, use this length of peaks (centered at
-            summits) to filter hits for
-        `moods_pval_thresh`: threshold p-value for MOODS to use
+            summits) to call hits for
+        `fimo_pval_thresh`: threshold p-value for FIMO to use
         `out_dir`: a directory to store intermediates and the final scored hits
         `remove_intermediates`: if True, all intermediate files are removed,
             leaving only the final scored hits table
@@ -344,7 +319,7 @@ def get_moods_hits(
     else:
         shap_peak_bed_path = peak_bed_path
     
-    # If needed, cut peaks to smaller size for filtering
+    # If needed, cut peaks to smaller size for doing motif scanning
     if center_cut_size:
         peaks_table = pd.read_csv(
             peak_bed_path, sep="\t", header=None, index_col=False,
@@ -367,38 +342,36 @@ def get_moods_hits(
     else:
         filter_peak_bed_path = shap_peak_bed_path
 
+    # # From the BED file we'll be using for scanning, generate a Fasta
+    seqs_fasta = os.path.join(out_dir, "seqs.fasta")
+    bed_to_fasta(filter_peak_bed_path, seqs_fasta, reference_fasta)
+
     # Create PFM files
-    export_motifs(pfm_dict, out_dir)
+    motif_file = os.path.join(out_dir, "motifs.txt")
+    export_motifs(pfm_dict, motif_file)
 
-    # Run MOODS
-    run_moods(out_dir, reference_fasta, pval_thresh=moods_pval_thresh)
+    # Run FIMO
+    run_fimo(motif_file, seqs_fasta, out_dir, pval_thresh=fimo_pval_thresh)
 
-    # Convert MOODS output into BED file
-    moods_hits_to_bed(
-        os.path.join(out_dir, "moods_out.csv"),
-        os.path.join(out_dir, "moods_out.bed")
-    )
-
-    # Filter hits for those that overlap peaks
-    filter_hits_for_peaks(
-        os.path.join(out_dir, "moods_out.bed"),
-        os.path.join(out_dir, "moods_filtered.bed"),
-        filter_peak_bed_path
+    # Convert FIMO output into BED file
+    fimo_hits_to_bed(
+        os.path.join(out_dir, "fimo.tsv"),
+        os.path.join(out_dir, "fimo_out.bed")
     )
 
     compute_hits_importance_scores(
-        os.path.join(out_dir, "moods_filtered.bed"),
+        os.path.join(out_dir, "fimo_out.bed"),
         shap_scores_hdf5_path, hyp_score_key, shap_peak_bed_path, pfm_dict,
-        os.path.join(out_dir, "moods_filtered_scored.bed")
+        os.path.join(out_dir, "fimo_scored.bed")
     )
 
-    hit_table = import_moods_hits(
-        os.path.join(out_dir, "moods_filtered_scored.bed")
+    hit_table = import_fimo_hits(
+        os.path.join(out_dir, "fimo_scored.bed")
     )
 
     if remove_intermediates:
         for item in os.listdir(out_dir):
-            if item != "moods_filtered_scored.bed":
+            if item != "fimo_scored.bed":
                 os.remove(os.path.join(out_dir, item))
 
     return hit_table

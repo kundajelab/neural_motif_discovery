@@ -50,7 +50,7 @@ def export_pfms_to_meme_format(
     if names is None:
         names = [str(i) for i in range(len(pfms))]
     else:
-        assert len(names) == pfms
+        assert len(names) == len(pfms)
         assert len(names) == len(np.unique(names))
     if background_freqs is None:
         background_freqs = BACKGROUND_FREQS
