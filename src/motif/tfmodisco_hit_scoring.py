@@ -56,13 +56,17 @@ def import_tfmodisco_hits(hits_bed):
     "-p", "--pattern-inds", default=None, type=str,
     help="Comma-delimited list of pattern indices in the metacluster to use for motif assignment; defaults to all patterns in the metacluster"
 )
+@click.option(
+    "-s", "--query-shap-scores-path", default=None, type=str,
+    help="Path to a separate DeepSHAP importance scores HDF5 that contains query sequences to run hit scoring on, if they are different from the importance scores TF-MoDISco was initially run on"
+)
 @click.argument("shap_scores_path", nargs=1)
 @click.argument("tfm_results_path", nargs=1)
 @click.argument("peak_bed_path", nargs=1)
 def main(
     shap_scores_path, tfm_results_path, peak_bed_path, outdir, hyp_score_key,
     input_length, center_cut_size, keep_non_acgt, min_ic, metacluster_ind,
-    pattern_inds
+    pattern_inds, query_shap_scores_path
 ):
     assert metacluster_ind in (0, 1)
     if pattern_inds is not None:
@@ -79,6 +83,19 @@ def main(
     tfm_results = run_tfmodisco.import_tfmodisco_results(
         tfm_results_path, hyp_scores, one_hot_seqs, center_cut_size
     )
+    # Calculate background frequencies using the original importance scores
+    bg_freq = np.mean(one_hot_seqs, axis=(0, 1))
+
+    if query_shap_scores_path is not None:
+        # Now switch over to query importance scores
+        print("Importing query DeepSHAP scores...")
+        hyp_scores, act_scores, one_hot_seqs, imp_coords = \
+            run_tfmodisco.import_shap_scores(
+                query_shap_scores_path, hyp_score_key,
+                center_cut_size=center_cut_size,
+                remove_non_acgt=(not keep_non_acgt)
+        )
+
     assert np.all(imp_coords[:, 2] - imp_coords[:, 1] == input_length)
 
     # Import peaks
@@ -142,8 +159,6 @@ def main(
     else:
         patterns = [patterns[i] for i in pattern_inds]
 
-    bg_freq = np.mean(one_hot_seqs_matched, axis=(0, 1))
-        
     # Verify that every pattern has sufficiently high IC
     for pattern in patterns:
         pfm = pattern["sequence"].fwd
@@ -193,24 +208,37 @@ def main(
         for example_index, match_list in example_to_matches.items():
             for match in match_list:
                 rows.append([
-                    match.exampleidx + offset, match.patternidx, match.start,
-                    match.end, match.is_revcomp, match.aggregate_sim,
-                    match.mod_delta, match.mod_precision, match.mod_percentile,
-                    match.fann_perclasssum_perc, match.fann_perclassavg_perc
+                    match.patternidx, match.patternidx_rank,
+                    match.total_importance, match.exampleidx + offset,
+                    match.start, match.end, match.trim_start, match.trim_end,
+                    match.seqlet_orig_start, match.seqlet_orig_end,
+                    match.seqlet_orig_revcomp, match.is_revcomp,
+                    match.aggregate_sim, match.mod_delta, match.mod_precision,
+                    match.mod_percentile, match.fann_perclasssum_perc,
+                    match.fann_perclassavg_perc
                 ])
-    
+
     # Collate the matches together into a big table
     colnames = [
-        "example_index", "pattern_index", "start", "end", "revcomp",
-        "agg_sim", "mod_delta", "mod_precision", "mod_percentile",
+        "pattern_index", "pattern_index_rank", "total_importance",
+        "example_index", "start", "end", "trim_start", "trim_end",
+        "seqlet_orig_start", "seqlet_orig_end", "seqlet_orig_revcomp",
+        "revcomp", "agg_sim", "mod_delta", "mod_precision", "mod_percentile",
         "fann_perclasssum_perc", "fann_perclassavg_perc"
     ]
     match_table = pd.DataFrame(rows, columns=colnames)
 
     # Save raw table
-    match_table.to_csv(
-        os.path.join(outdir, "tfm_matches_raw.tsv"), sep="\t", header=True,
-        index=False
+    raw_table_path = os.path.join(outdir, "tfm_matches_raw.tsv")
+    match_table.to_csv(raw_table_path, sep="\t", header=True, index=False)
+
+    # Reimport the match table with limited columns
+    match_table = pd.read_csv(
+        raw_table_path, sep="\t", header=0, index_col=False, usecols=[
+            "example_index", "pattern_index", "start", "end", "revcomp",
+            "agg_sim", "mod_delta", "mod_precision", "mod_percentile",
+            "fann_perclasssum_perc", "fann_perclassavg_perc"
+        ]
     )
 
     print("Cleaning up matches...")
