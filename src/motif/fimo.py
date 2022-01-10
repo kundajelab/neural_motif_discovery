@@ -58,6 +58,7 @@ def run_fimo(motif_file, seqs_fasta, out_dir, pval_thresh=0.0001):
     comm = ["fimo"]
     comm += ["--oc", out_dir]
     comm += ["--thresh", str(pval_thresh)]
+    comm += ["--max-stored-scores", str(1000000)]
     comm += [motif_file]
     comm += [seqs_fasta]
     subprocess.check_call(comm)
