@@ -40,22 +40,30 @@ def get_sequences_from_bam(bam_path, chrom, start, end):
 
 if __name__ == "__main__":
     base_path = "/users/amtseng/tfmodisco/results/misc_results/bam_reads/"
+    
+    import sys
+    shard = int(sys.argv[1])
 
-    # bam_path = os.path.join(base_path, "E2F6_ENCSR000BLI_K562_align-unfilt_merged.bam")
-    # hits_path = os.path.join(base_path, "E2F6_singletask_profile_finetune_fold10_task0_profile_max_hits.bed")
-    # out_path = os.path.join(base_path, "E2F6_singletask_profile_finetune_fold10_task0_profile_max_motif_reads.tsv")
-
-    # bam_path = os.path.join(base_path, "MAX_ENCSR000BLP_K562_align-unfilt_merged.bam")
-    # hits_path = os.path.join(base_path, "E2F6_singletask_profile_finetune_fold10_task0_profile_e2f6_hits_in_max_peaks.bed")
-    # out_path = os.path.join(base_path, "E2F6_singletask_profile_finetune_fold10_task0_profile_e2f6_hits_in_max_peaks_reads.tsv")
-
-    bam_path = os.path.join(base_path, "MAX_ENCSR000BLP_K562_align-unfilt_merged.bam")
-    hits_path = os.path.join(base_path, "MAX_peak_sequences_e2f6_sequence_matches.bed")
-    out_path = os.path.join(base_path, "MAX_peak_sequences_e2f6_sequence_matches_reads.tsv")
+    if shard == 1:
+        bam_path = os.path.join(base_path, "E2F6_ENCSR000BLI_K562_align-unfilt_merged.bam")
+        hits_path = os.path.join(base_path, "E2F6_singletask_profile_finetune_fold10_task0_profile_max_hits_in_max_peaks.bed")
+        out_path = os.path.join(base_path, "E2F6_reads_at_MAX_hits.tsv")
+    elif shard == 2:
+        bam_path = os.path.join(base_path, "MAX_ENCSR000BLP_K562_align-unfilt_merged.bam")
+        hits_path = os.path.join(base_path, "E2F6_singletask_profile_finetune_fold10_task0_profile_max_hits_in_max_peaks.bed")
+        out_path = os.path.join(base_path, "MAX_reads_at_MAX_hits.tsv")
+    elif shard == 3:
+        bam_path = os.path.join(base_path, "MAX_ENCSR000BLP_K562_align-unfilt_merged.bam")
+        hits_path = os.path.join(base_path, "E2F6_singletask_profile_finetune_fold10_task0_profile_e2f6_hits_in_max_peaks.bed")
+        out_path = os.path.join(base_path, "MAX_reads_at_E2F6_hits.tsv")
+    elif shard == 4:
+        bam_path = os.path.join(base_path, "E2F6_ENCSR000BLI_K562_align-unfilt_merged.bam")
+        hits_path = os.path.join(base_path, "E2F6_singletask_profile_finetune_fold10_task0_profile_e2f6_hits_in_max_peaks.bed")
+        out_path = os.path.join(base_path, "E2F6_reads_at_E2F6_hits.tsv")
 
     hits_table = pd.read_csv(
         hits_path, sep="\t", header=None, index_col=False,
-        names=["chrom", "start", "end"], usecols=[0, 1, 2]
+        names=["chrom", "start", "end", "strand"], usecols=[0, 1, 2, 4]
     )
 
     with open(out_path, "w") as f:
@@ -63,4 +71,4 @@ if __name__ == "__main__":
             seqs = get_sequences_from_bam(bam_path, row["chrom"], row["start"], row["end"])
             if not seqs:
                 continue
-            f.write("%s\t%d\t%d\t%s\n" % (row["chrom"], row["start"], row["end"], ",".join(seqs)))
+            f.write("%s\t%d\t%d\t%s\t%s\n" % (row["chrom"], row["start"], row["end"], row["strand"], ",".join(seqs)))
