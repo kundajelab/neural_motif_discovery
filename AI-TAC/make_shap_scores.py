@@ -72,7 +72,7 @@ def get_binarized_aitac_explainer(
     help="If specified, only explain a particular task index"
 )
 def main(outfile, binarized, use_logits, normalize, task_index):
-    import deeplift.visualization.viz_sequence as viz_sequence
+    import plot.viz_sequence as viz_sequence
     # Set paths/constants
     base_path = "/users/amtseng/tfmodisco/data/processed/AI-TAC/"
     data_path = os.path.join(base_path, "data")

@@ -1,4 +1,4 @@
-from deeplift.dinuc_shuffle import dinuc_shuffle
+from plot.viz_sequence as viz_sequence
 import shap
 import tensorflow as tf
 import keras

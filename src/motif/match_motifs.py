@@ -227,7 +227,7 @@ def match_motifs_to_database(
 
 if __name__ == "__main__":
     import motif_bench.read_motifs as read_motifs
-    import deeplift.visualization.viz_sequence as viz_sequence
+    import plot.viz_sequence as viz_sequence
 
     tf_name = "E2F6"
     fold = 4
