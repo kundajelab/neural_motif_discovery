@@ -1,7 +1,7 @@
 install-dependencies:
 	conda install -y -c anaconda click scipy numpy pymongo scikit-learn pandas
 	conda install -y -c conda-forge tqdm matplotlib
-	pip install sacred seqdataloader tables keras==2.2.5 tensorflow-gpu==1.14.0
+	pip install sacred seqdataloader tables keras==2.2.5 tensorflow-gpu==1.14.0 pomegranate
 	conda install -y -c bioconda pyfaidx pybigwig
 
 install-interpet:
