@@ -1,0 +1,7 @@
+{
+	"peak_beds": [
+        "/users/amtseng/tfmodisco/data/processed/ZNF248/labels/ChIPexo/ZNF248_Exo_HEK239T_all_peakints.bed.gz"
+	],
+	"profile_hdf5": "/users/amtseng/tfmodisco/data/processed/ZNF248/labels/ChIPexo/ZNF248_profiles.h5"
+}
+

@@ -170,6 +170,21 @@ The performance metrics from fine-tuning can be found under `supporting_info/mod
 
 For downstream analyses, unless stated otherwise, we use the fine-tuned models only, and we choose the best fine-tuned model based on validation loss between the single-task and multi-task architectures.
 
+#### ZNF248 models
+
+We also trained models on ZNF248 ChIP-exo data. We ran the following command:
+
+```
+MODEL_DIR=output_path \
+	python -m model.hyperparam \
+	-f $filesspecpath \
+	-c $configpath \
+	-s chrom_splits.json \
+	-k 1 \
+	-n 3 \
+	train.num_epochs=100 train.early_stopping=False
+```
+
 ### Computing and saving model predictions/performance
 
 For each model, we compute the model predictions and performance metrics across all peaks for that task.
@@ -503,15 +518,35 @@ python -m motif.tfmodisco_hit_scoring \
 
 #### Figure 5: Fixed and soft syntax cooperativity
 
-We used task 4 and task 7 
+We used task 4 and task 7 in JUND (both single-task fine-tuned models), task 6 in CEBPB (multi-task fine-tuned model), and task 0 in FOXA2 (single-task fine-tuned model).
 
 [motif_simulations_JUND.ipynb](notebooks/figures/vignettes/motif_simulations_JUND.ipynb):
-This generates the figures for JUND/TEAD and JUND/IRF spacing constraints.
+This generates the figures for JUND/TEAD and JUND/IRF spacing constraints. Task 4 was used for TEAD syntax, and task 7 was used for IRF syntax.
 
-[motif_simulations_cebp_hepg2.ipynb](notebooks/figures/vignettes/motif_simulations_cebp_hepg2.ipynb):
+[motif_simulations_CEBP.ipynb](notebooks/figures/vignettes/motif_simulations_CEBP.ipynb):
 This generates the figures for CEBP/ATF spacing constraints.
 
 [motif_simulations_foxa2_hepg2.ipynb](notebooks/figures/vignettes/motif_simulations_foxa2_hepg2.ipynb):
 This generates the figures for FOXA2/CEBP and FOXA2/HNF4 spacing constraints.
 
+#### Figure 6: Directional cooperativity between MAX and E2F6
 
+We used task 0 in E2F6 and task 0 in MAX (both multi-task fine-tuned models).
+
+[motif_simulations_e2f6_and_max.ipynb](notebooks/figures/vignettes/motif_simulations_e2f6_and_max.ipynb):
+This generates the figures for E2F6/MAX motifs on their predicted binding responses.
+
+[allele_specific_binding.ipynb](notebooks/figures/vignettes/allele_specific_binding.ipynb):
+This generates the figures for allele-specific binding in the genome for E2F6 and MAX at their motifs. This requires the models, and the observed BigWigs for both ChIP-seq experiments.
+
+#### Figure 7: Tissue-specific MAFK motifs
+
+We used task 3 and task 6 for MAFK (both from the same multi-task fine-tuned model).
+
+[motif_simulations_mafk.ipynb](notebooks/figures/vignettes/motif_simulations_mafk.ipynb):
+This generates the figures for MAFK binding responses at various motifs.
+
+#### Figure 8: ZNF248 motifs in transposable elements
+
+[ZNF248_pwm_vs_cwm.ipynb](notebooks/figures/vignettes/ZNF248_pwm_vs_cwm.ipynb):
+This generates all the panels in this figure.
