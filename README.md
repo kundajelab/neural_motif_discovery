@@ -31,6 +31,12 @@ We first downloaded metadata tables from ENCODE using the following commands:
 		```
 		FIRST=1; for otype in "unfiltered alignments" "peaks and background as input for IDR" "optimal IDR thresholded peaks"; do wget -O - "https://www.encodeproject.org/report.tsv?type=File&status=released&assembly=GRCh38&output_type=$otype" | awk -v first=$FIRST '(first == 1) || NR > 2' >> encode_tf_chip_files.tsv; FIRST=2; done
 		```
+- `encode_tf_chip_files_v2_with_signalbw.tsv`
+	- A metadata file listing various ENCODE files, filtered for those that are aligned to hg38, status released, and of the relevant output types (i.e. unfiltered alignments, called peaks, optimal IDR-filtered peaks, and signal p-value)
+	- Downloaded with the following commands:
+		```
+		FIRST=1; for otype in "signal p-value" "unfiltered alignments" "peaks and background as input for IDR" "optimal IDR thresholded peaks"; do wget -O - "https://www.encodeproject.org/report.tsv?type=File&status=released&assembly=GRCh38&output_type=$otype" | awk -v first=$FIRST '(first == 1) || NR > 2' >> encode_tf_chip_files.tsv; FIRST=2; done
+		```
 
 The API for the download of the experiment and files metadata is described [here](https://app.swaggerhub.com/apis-docs/encodeproject/api/basic_search/)
 
@@ -43,6 +49,8 @@ For NR3C1, we used 11 experiments from the timeseries ENCSR210PYP.
 For a full set of experiments used in this study, see [task_definitions.txt](supporting_info/task_definitions.txt).
 
 We also obtained raw read data for ZNF248 binding [as measured by ChIP-exo](https://www.nature.com/articles/nature21683) from GSE78099, under SRR5197087.
+
+For benchmarking with DiChIPMunk, we also obtained signal p-value BigWigs for each TF/experiment. To do so, we used [download_ENCODE_signal_bw.py](src/data/download_ENCODE_signal_bw.py) for each TF. For NR3C1, we did not obtain signal BigWigs, as they did not exist for every experiment.
 
 ### Processing training data
 
@@ -232,21 +240,278 @@ Here, `impscorepath` is the path to the DeepSHAP scores. `hypscorekey` is either
 
 ### Running the TF-MoDISco motif instance caller
 
+To compute motif instance calls, we run the instance caller as follows:
+
+```
+python -m motif.tfmodisco_hit_scoring \
+	output_path/imp_scores.h5 \
+	output_path/tfmodisco_results.h5 \
+	data_path/peaks.bed.gz \
+	-k $hypscorekey \
+	-o output_path/motif_instances
+```
+
+This script requires the DeepSHAP scores HDF5, and associated TF-MoDISco results HDF5, the key (either `profile_hyp_scores` or `count_hyp_scores`), and the set of peaks to call motifs instances in.
+
+This gives a large BED file which contains the motif instances.
+
+These motif instances are collapsed using the following commands:
+
+```
+python src/motif/collapse_motif_hits.py hits.bed 7 -d -3 > hits_collapsed-all.bed
+python src/motif/collapse_motif_hits.py hits.bed 7 -s -d -3 > hits_collapsed-sep.bed
+```
+
+This collapsing merges together overlapping motif hits in two different ways: one by collapsing all hits across all motifs/patterns; and one by collapsing hits only within their own motif/pattern. Unless otherwise stated, downstream analyses use the "collapsed-all" treatment.
+
+### Benchmark motifs
+
+For each experiment for each TF, we also run HOMER, MEME, and DiChIPMunk on the (IDR) peak sets. To do so, we used [make_benchmarks.py](src/motif/make_benchmarks.py), and we ran the following commands:
+
+```
+python -m motif.make_benchmarks \
+	-o output_path \
+	-t peaks \
+	-f $filesspecpath \
+	-b homer,memechip \
+	-i $taskindex
+
+python -m motif.make_benchmarks \
+	-o output_path \
+	-t peaks \
+	-f $filesspecpath \
+	-b dichipmunk \
+	-l 2000 \
+	-i $taskindex \
+	-s
+```
+
+For NR3C1, we did not include the -s flag for running DiChIPMunk.
+
+These motifs were saved into an HDF5 file using [format_benchmark_motifs.py](supporting_info/format_benchmark_motifs.py)
+
+### Benchmark motif instances
+
+For each TF/experiment, we ran MOODS to obtain motif instances. For each TF/experiment, we took the motifs discovered by TF-MoDISco on the fine-tuned model which performed best, and ran MOODS using [run_moods.py](supporting_info/run_moods.py). We ran the following command:
+
+```
+python run_moods.py \
+	$impscores \
+	$tfmodisco_results \
+	-p $peaksbedfile \
+	-k $hypscorekey \
+	-o output_path/moods_hits
+```
+
+These motif instances are collapsed using the following commands:
+
+```
+python src/motif/collapse_motif_hits.py hits.bed 5 > hits_collapsed-all.bed
+python src/motif/collapse_motif_hits.py hits.bed 5 -s > hits_collapsed-sep.bed
+```
+
+### Avsec et. al. 2021 motif instances
+
+We obtained ground-truth motif instances from Avsec et. al. 2021. From the authors, we obtained the following files:
+- ChIP-seq peaks
+- ChIP-nexus read BigWigs
+- Importance scores from a model trained on ChIP-seq data
+- Motif instance calls using the authors' methods
+
+The importance scores were reformatted using [extract_BPNet_imp_scores.py](src/data/extract_BPNet_imp_scores.py).
+
+We ran TF-MoDISco to perform motif discovery (on the profile-head importance scores) using the same command as above.
+
+We ran the TF-MoDISco and MOODS instance callers on these importance scores as-is, using the following commands:
+
+```
+python run_moods.py \
+	$tfname\_ChIPseq_imp_scores.h5 \
+	$tfname\_tfmodisco_results_profile_head.h5 \
+	-p $tfname\_peaks.bed \
+	-k profile_hyp_scores \
+	-il 1000 \
+	-r mm10.fasta \
+	-o out_path/$tfname\_moods_hits
+
+python -m motif.tfmodisco_hit_scoring \
+	$tfname\_ChIPseq_imp_scores.h5 \
+	$tfname\_tfmodisco_results_profile_head.h5 \
+	$tfname\_peaks.bed \
+	-k profile_hyp_scores \
+	-i 1000 \
+	-m 0.3 \
+	-p $tfname_patterninds
+	-o out_path/$tfname\_tfmodisco_hits
+```
+
+The TF name is either Nanog, Oct4, or Sox2. The pattern indices used are `0,1,2,3,4,10`, `0,1,3,5,6`, and `0,1,2,3,5` respectively.
+
+Collapsing is done as described above.
+
 ### Automated motif syntax/grammar analysis with summarized reports
 
-### Motif syntax/grammar derivation using *in silico* simulations
+We then run our automated pipeline for motif syntax/grammar analysis. This consists of a set of Jupyter notebooks which rely on some combination of the peak predictions, importance scores, and TF-MoDISco results (all as HDF5 files). Here, we describe each notebook, and the arguments/files it relies on. We generated our reports using the `jupyter nbconvert` command for each one.
 
-### Generation of specific biological plots
+All report notebooks can be found under `notebooks/reports/`.
 
+#### `performance_comparison.ipynb`
 
+This compares the performance of our models across all 10 folds, multi-task vs single-task, and fine-tuned vs non-fine-tuned.
 
+Dependencies:
+- Predictions/performance HDF5s for all multi-task and single-task models, across all 10 folds, and fine-tuned models (for a single TF)
 
+This is run for a single TF at a time.
 
+#### `view_tfmodisco_results.ipynb`
 
+This visualizes the TF-MoDISco motifs, including:
+- PFM, PWM, CWM, and hCWM of each discovered motif
+- Average predicted/observed profile underlying motif seqlets
+- Distance distribution of motif seqlets to peak summits
+- TOMTOM matches of each motif
+- Examples of seqlet importance scores for each motif
 
+Dependencies:
+- TF-MoDISco result HDF5
+- Peak predictions HDF5
+- Importance scores HDF5
+- Set of all peaks as ENCODE NarrowPeak format (used for distance distribution of seqlets to peak summits)
+- Path to a motif database to use for computing TOMTOM matches (in MEME format)
 
+This notebook will save the following files:
+- An HDF5 of all TF-MoDISco motifs, including the PFMs, CWMs, and hypothetical CWMs (and trimmed versions of these)
+- For the set of seqlets underlying each motif, a NumPy object of the set of true/predicted profiles, DNA sequences, hypothetical importance scores, coordinates, and distances to peak summits of these seqlets
 
+#### `summarize_motif_hits.ipynb`
 
+This notebook analyzes the resulting hits of the TF-MoDISco scoring algorithm. This notebook will visualize:
+- The distribution of how many motif hits are found per peak
+- The proportion of peaks that have each type of motif
+- Example importance score tracks with highlighted motif hits
+- Co-occurrence of different motifs in peaks
+- Homotypic motif densities in peaks
+- Distribution of distances between strongly co-occurring motifs
 
+Dependencies:
+- TF-MoDISco result HDF5
+- Importance scores HDF5
+- Set of all peaks as a single BED file in ENCODE NarrowPeak format
+	- This needs to be the exact same peak file that was used to call the TF-MoDISco hit scoring algorithm
+- Path to TF-MoDISco hit scoring output table (output by `tfmodisco_hit_scoring.py`)
+
+This notebook will save the following files:
+- The filtered hits after thresholding
+- The set of all peaks
+- The mapping between the index of each peak to the set of indices of the filtered hits belonging to that peak
+- HDF5 of co-occurrence matrices of the different motifs in p-values and raw counts
+- HDF5 of motif distance distributions between significantly co-occurring motifs
+
+This is run for both the TF-MoDISco motif instances, as well as the MOODS instances, for each TF/experiment.
+
+#### `submotif_clustering.ipynb`
+
+From the set of TF-MoDISco motifs and the motif hits in peaks, this notebook will visualize the subclustering structure within motifs themselves
+
+Dependencies:
+- TF-MoDISco result HDF5
+- Importance scores HDF5
+
+This notebook will save the following files:
+- HDF5 of all motif subclusters: the PFM, CWM, hypothetical CWM, and trimmed hypothetical CWM of each sub-motif (of each motif)
+
+#### `plot_motif_heatmap.ipynb`
+
+This notebook considers the motifs discovered across several TF-MoDISco runs, and clusters them into a heatmap.
+
+Dependencies:
+- TF-MoDISco-discovered motifs as an HDF5 file (as output by `view_tfmodisco_results.ipynb`)
+- A name for each HDF5 file
+
+This notebook will save the following files:
+- Similarity matrix, dendrogram, and cluster definitions for the motifs
+
+#### `merge_count_profile_motifs.ipynb`
+
+Since TF-MoDISco motifs were discovered separately for the profile and count heads, we merge the two heads together into motifs using this notebook.
+
+Dependencies:
+- TF-MoDISco-discovered motifs as an HDF5 file (as output by `view_tfmodisco_results.ipynb`)
+
+This notebook will save the following files:
+- An HDF5 of motifs of the same format as the input, with appropriate profile-head and count-head motifs merged
+
+Note: in order to merge motif instances between the two heads, we simply pool the hits from both heads and run the same collapsing command as above.
+
+### Generation of figures
+
+For each figure in the paper, we point to the notebook(s) under `notebooks/figures/` which generate those figures. These notebooks' dependencies are the files generated above for a particular TF and experiment.
+
+#### Figure 1: Overview of framework for motif discovery and interrogation
+
+[profile_imp_score_example.ipynb](notebooks/figures/profile_imp_score_example.ipynb):
+This generates the example of the profiles and importance scores in Figure 1.
+
+#### Figure 2: Motifs discovered by TF-MoDISco
+
+[motif_prevalence.ipynb](notebooks/figures/motif_prevalence.ipynb):
+This extracts the motif prevalences from the motif hits, and constructs a bar plot. We used MAX, and kept the plot for task index 2.
+
+[fold_model_motif_reproducibility.ipynb](notebooks/figures/fold_model_motif_reproducibility.ipynb):
+This generates the reproducibility of TF-MoDISco motifs across folds and model types for a particular TF/experiment. We used MAX with task index 2. Although the figure shows MAX task 2, we ran this for all TFs/experiments, and saved the resulting reproducibility values.
+
+[fold_model_motif_reproducibility_summary.ipynb](notebooks/figures/fold_model_motif_reproducibility_summary.ipynb):
+This creates the figures showing TF-MoDISco motif reproducibility for all TFs and experiments. Using the reproducibility values saved by `fold_model_motif_reproducibility.ipynb`, this notebook uses them and plots the overall reproducibility across all TFs/experiments.
+
+[motifs_across_tasks.ipynb](notebooks/figures/motifs_across_tasks.ipynb):
+For each TF, this shows the prevalence of each motif across the many tasks/experiments, matches each motif to a benchmark motif, and to JASPAR. The clustering of different motifs across tasks into known identities was aided by this notebook, then curated manually. This notebook was run for each TF. In the figure, we showed the plot generated for SPI1. We ran this for all TFs, and saved the resulting motifs and analysis results.
+
+[motifs_across_tasks_summary.ipynb](notebooks/figures/motifs_across_tasks_summary.ipynb):
+This creates the figure showing how well TF-MoDISco motifs are reproduced by the benchmarks, across all TFs. This relies on the saved outputs from `motifs_across_tasks.ipynb`.
+
+[motifs_across_tasks_SPI1_peak_overlap.ipynb](notebooks/figures/vignettes/motifs_across_tasks_SPI1_peak_overlap.ipynb):
+This takes in the peak files for SPI1 and peak files downloaded from ENCODE for other cofactors, and computes peak overlap plots. The peak files for cofactors are defined in [cofactor_peak_files.tsv](supporting_info/SPI1_cofactor_peak_overlaps/cofactor_peak_files.tsv), and the overlaps were computed by [compute_overlaps.sh](supporting_info/SPI1_cofactor_peak_overlaps/compute_overlaps.sh).
+
+#### Figure 3: The TF-MoDISco motif instance caller
+
+[BPNet_motif_hits_ChIPnexus.ipynb](notebooks/figures/BPNet_motif_hits_ChIPnexus.ipynb):
+This generates the comparison of the TF-MoDISco motif instances to MOODS and those presented in Avsec et. al. 2021, for the Nanog, Oct4-Sox2, and Sox2 motifs.
+
+[motif_hit_comparison.ipynb](notebooks/figures/motif_hit_comparison.ipynb):
+This generates the other panels for the figure, comparing TF-MoDISco motif instances to others. This requires the saved TF-MoDISco motifs HDF5s, the filtered TF-MoDISco motif instances, and the filtered MOODS motif instances.
+
+#### Figure 4: REST shows multiple binding modes
+
+We used task 0 for REST, from the multi-task fine-tuned model.
+
+[motif_simulations_REST.ipynb](notebooks/figures/vignettes/motif_simulations_REST.ipynb):
+This conducts the simulations between REST motif halves. 
+
+[REST_motif_spacing.ipynb](notebooks/figures/vignettes/REST_motif_spacing.ipynb):
+This computes ChIP-seq-measured support of binding at various motif grammars. This relies on the result of calling the TF-MoDISco motif instance caller on only the subpatterns corresponding to the left and right halves. This was done using the following command:
+
+```
+python -m motif.tfmodisco_hit_scoring \
+	REST_multitask_profile_finetune_task0_imp_scores.h5 \
+	REST_multitask_profile_finetune_task0_tfmodisco_results.h5 \
+	REST_task0_peaks.bed.gz \
+	-k count_hyp_scores \
+	-p 8,1 \
+	-o output_path
+```
+
+#### Figure 5: Fixed and soft syntax cooperativity
+
+We used task 4 and task 7 
+
+[motif_simulations_JUND.ipynb](notebooks/figures/vignettes/motif_simulations_JUND.ipynb):
+This generates the figures for JUND/TEAD and JUND/IRF spacing constraints.
+
+[motif_simulations_cebp_hepg2.ipynb](notebooks/figures/vignettes/motif_simulations_cebp_hepg2.ipynb):
+This generates the figures for CEBP/ATF spacing constraints.
+
+[motif_simulations_foxa2_hepg2.ipynb](notebooks/figures/vignettes/motif_simulations_foxa2_hepg2.ipynb):
+This generates the figures for FOXA2/CEBP and FOXA2/HNF4 spacing constraints.
 
 
