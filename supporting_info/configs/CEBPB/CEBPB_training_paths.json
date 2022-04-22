@@ -1,0 +1,13 @@
+{
+	"peak_beds": [
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/CEBPB/CEBPB_ENCSR000BQI_HepG2_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/CEBPB/CEBPB_ENCSR000BRQ_K562_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/CEBPB/CEBPB_ENCSR000DYI_A549_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/CEBPB/CEBPB_ENCSR000EEE_HepG2_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/CEBPB/CEBPB_ENCSR000EFM_IMR-90_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/CEBPB/CEBPB_ENCSR000EHE_K562_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/CEBPB/CEBPB_ENCSR681NOM_GM12878_all_peakints.bed.gz"
+	],
+	"profile_hdf5": "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/CEBPB/CEBPB_profiles.h5"
+}
+

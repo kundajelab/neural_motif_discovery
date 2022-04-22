@@ -1,0 +1,15 @@
+{
+	"peak_beds": [
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/GABPA/GABPA_ENCSR000BHS_HeLa-S3_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/GABPA/GABPA_ENCSR000BIW_H1_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/GABPA/GABPA_ENCSR000BJK_HepG2_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/GABPA/GABPA_ENCSR000BLO_K562_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/GABPA/GABPA_ENCSR000BPY_A549_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/GABPA/GABPA_ENCSR000BTK_HL-60_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/GABPA/GABPA_ENCSR038GMB_liver_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/GABPA/GABPA_ENCSR331HPA_GM12878_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/GABPA/GABPA_ENCSR350ORK_liver_all_peakints.bed.gz"
+	],
+	"profile_hdf5": "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/GABPA/GABPA_profiles.h5"
+}
+

@@ -1,0 +1,26 @@
+{
+	"peak_beds": [
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BGF_GM12878_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BHM_H1_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BJJ_SK-N-SH_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BJL_HepG2_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BJO_Panc1_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BJP_PFSK-1_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BMN_HeLa-S3_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BMW_K562_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BOT_HepG2_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BOX_PFSK-1_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BOZ_SK-N-SH_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BPK_Panc1_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BQP_A549_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BQS_GM12878_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR000BTF_HL-60_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR137ZMQ_K562_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR663WAR_H1_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR867WPH_liver_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR892DRK_A549_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_ENCSR893QWP_liver_all_peakints.bed.gz"
+	],
+	"profile_hdf5": "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/REST/REST_profiles.h5"
+}
+

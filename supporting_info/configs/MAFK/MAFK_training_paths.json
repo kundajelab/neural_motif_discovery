@@ -1,0 +1,15 @@
+{
+	"peak_beds": [
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAFK/MAFK_ENCSR000DYV_GM12878_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAFK/MAFK_ENCSR000EBS_H1_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAFK/MAFK_ENCSR000ECK_HeLa-S3_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAFK/MAFK_ENCSR000EDZ_HepG2_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAFK/MAFK_ENCSR000EEB_HepG2_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAFK/MAFK_ENCSR000EFH_IMR-90_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAFK/MAFK_ENCSR000EGX_K562_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAFK/MAFK_ENCSR541WQI_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAFK/MAFK_ENCSR555PBN_MCF-7_all_peakints.bed.gz"
+	],
+	"profile_hdf5": "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAFK/MAFK_profiles.h5"
+}
+

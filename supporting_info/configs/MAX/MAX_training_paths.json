@@ -1,0 +1,13 @@
+{
+	"peak_beds": [
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAX/MAX_ENCSR000BLP_K562_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAX/MAX_ENCSR000DZF_GM12878_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAX/MAX_ENCSR000EDS_HepG2_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAX/MAX_ENCSR000EFV_K562_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAX/MAX_ENCSR000EUP_H1_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAX/MAX_ENCSR521IID_liver_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAX/MAX_ENCSR847DIT_liver_all_peakints.bed.gz"
+	],
+	"profile_hdf5": "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/MAX/MAX_profiles.h5"
+}
+

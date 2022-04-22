@@ -1,0 +1,22 @@
+{
+	"peak_beds": [
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR000BHE_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR000BHF_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR000BHG_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR000BJC_Ishikawa_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR000BJR_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR255CTA_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR287FWE_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR385RUW_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR424JOE_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR660RYY_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR686PFM_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR691GRA_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR720DXT_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR773NQB_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR919OXR_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_ENCSR952GOL_A549_all_peakints.bed.gz"
+	],
+	"profile_hdf5": "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1-reddytime/NR3C1-reddytime_profiles.h5"
+}
+

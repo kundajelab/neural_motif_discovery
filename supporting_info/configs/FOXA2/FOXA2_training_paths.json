@@ -1,0 +1,10 @@
+{
+	"peak_beds": [
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/FOXA2/FOXA2_ENCSR000BNI_HepG2_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/FOXA2/FOXA2_ENCSR066EBK_HepG2_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/FOXA2/FOXA2_ENCSR080XEY_liver_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/FOXA2/FOXA2_ENCSR310NYI_liver_all_peakints.bed.gz"
+	],
+	"profile_hdf5": "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/FOXA2/FOXA2_profiles.h5"
+}
+

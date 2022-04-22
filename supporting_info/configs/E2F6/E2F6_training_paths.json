@@ -1,0 +1,8 @@
+{
+	"peak_beds": [
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/E2F6/E2F6_ENCSR000BLI_K562_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/E2F6/E2F6_ENCSR000EWJ_K562_all_peakints.bed.gz"
+	],
+	"profile_hdf5": "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/E2F6/E2F6_profiles.h5"
+}
+

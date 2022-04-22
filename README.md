@@ -6,6 +6,8 @@ We present a computational framework for extracting transcription-factor (TF) mo
 
 Below, we walk through the exact steps we took to run/call the various scripts/notebooks in this repository in order to produce the main results we present in our manuscript.
 
+Needed dependencies are in the Makefile provided.
+
 ### Downloading training data
 First, we download the data needed for training models. This consists of IDR peak files and aligned (and unfiltered) read BAMs (for the experiment and the input control).
 
@@ -67,17 +69,166 @@ Models can be trained multi-task (across all experiments of a single TF), or sin
 
 #### Hyperparameter search
 
-For kind of model (multi-task or single-task), we perform hyperparameter search while training on fold 1. kkkk
+For kind of model (multi-task or single-task), we perform hyperparameter search while training on fold 1. We ran 20 random seeds, each for only 5 epochs at most. This was done using the script [hyperparam.py](src/model/hyperparam.py) and the following commands (for each TF and task):
+```
+MODEL_DIR=output_path/multitask_model_result/ \
+	python -m model.hyperparam \
+	-f $filesspecpath \
+	-c $configpath \
+	-p counts_loss_learn_rate.json \
+	-s chrom_splits.json \
+	-k 1 \
+	-n 20 \
+	train.num_epochs=5
+
+MODEL_DIR=output_path/singletask_model_result/ \
+	python -m model.hyperparam \
+	-f $filesspecpath \
+	-c $configpath \
+	-p counts_loss_learn_rate.json \
+	-s chrom_splits.json \
+	-k 1 \
+	-n 20 \
+	-i $taskindex \
+	train.num_epochs=5
+```
+
+These commands require:
+- [counts_loss_learn_rate.json](supporting_info/configs/counts_loss_learn_rate.json)
+- File specs JSON, which can be found under `supporting_info/configs/{tf_name}/{tf_name}_paths.json`
+- TF config JSON, which can be found under `supporting_info/configs/{tf_name}/{tf_name}_config.json`
+
+The result of hyperparameter tuning found the best counts loss weight and learning rate for each single-task and multi-task model for each TF, and these results can be found under `supporting_info/configs/{tf_name}/{tf_name}_hypertune_task*.json`
 
 #### Training with optimal hyperparameters
 
+Now that we have the optimal hyperparameters, we train each multi-task and single-task model across all 10 folds of the genome. We run the following commands (for each TF and task):
+
+```
+MODEL_DIR=output_path/multitask_model_result/ \
+	python -m model.hyperparam \
+	-f $filesspecpath \
+	-c $configpath \
+	-s chrom_splits.json \
+	-k $fold \
+	-n 3 \
+	train.num_epochs=15
+
+MODEL_DIR=output_path/singletask_model_result/ \
+	python -m model.hyperparam \
+	-f $filesspecpath \
+	-c $configpath \
+	-s chrom_splits.json \
+	-k $fold \
+	-n 3 \
+	-i $taskindex \
+	train.num_epochs=15
+```
+
+Here, `configpath` now refers to `{tf_name}_hypertune_task*.json` from above, and `fold` ranges from 1 to 10.
+
+The performance metrics from training all 10 folds can be found under `supporting_info/model_stats/*_allfolds_stats.tsv`.
+
 #### Fine-tuning models
 
-### Computing and saving model predictions
+Finally, we take the best-performing fold for each multi-task and single-task model, and perform fine-tuning on all the output heads. Fine-tuning is performed via [finetune_tasks.py](src/model/finetune_tasks.py). We run the following commands (for each TF and task):
+
+```
+MODEL_DIR=output_path/multitask_model_result/ \
+	python -m model.finetune_tasks \
+	-f $filesspecpath \
+	-s chrom_splits.json \
+	-k $fold \
+	-m $startingmodelpath \
+	-t $numtasks \
+	-n 3 \
+	train.num_epochs=20 train.early_stop_hist_len=5
+
+MODEL_DIR=output_path/singletask_model_result/ \
+	python -m model.finetune_tasks \
+	-f $filesspecpath \
+	-s chrom_splits.json \
+	-k $fold \
+	-m $startingmodelpath \
+	-t $numtasks \
+	-n 3 \
+	-i $taskindex -l \
+	train.num_epochs=20 train.early_stop_hist_len=5
+```
+
+Here, `fold` is the best-performing fold for the model, `startingmodelpath` is the path to the model of the best validation loss (over all epochs) that fine-tuning starts with, and `numtasks` is the number of tasks for the TF.
+
+The performance metrics from fine-tuning can be found under `supporting_info/model_stats/*_finetune_stats.tsv`.
+
+For downstream analyses, unless stated otherwise, we use the fine-tuned models only, and we choose the best fine-tuned model based on validation loss between the single-task and multi-task architectures.
+
+### Computing and saving model predictions/performance
+
+For each model, we compute the model predictions and performance metrics across all peaks for that task.
+
+To do this, we use the [predict_peaks.py](src/extract/predict_peaks.py) script. We run the following commands:
+
+```
+python -m extract.predict_peaks \
+	-m $modelpath \
+	-f $filesspecpath \
+	-n $numtasks \
+	-o output_path/multitask_predictions.h5
+
+python -m extract.predict_peaks \
+	-m $modelpath \
+	-f $filesspecpath \
+	-n $numtasks \
+	-mn 1 \
+	-i $taskindex \
+	-o output_path/singletask_predictions.h5
+```
+
+Here, `modelpath` is the path to the model to run predictions on, and `numtasks` is the number of tasks for the TF.
+
+For model, this generates a set of predictions for each peak and the performance metrics, and saves it as an HDF5.
+
+For each TF, we can also compute a set of upper and lower bounds for the performance metrics. This is done using [bound_performance.py](src/extract/bound_performance.py) run on each TF's file specs JSON separately.
 
 ### Local interpretation with DeepSHAP
 
+For each model, we can run DeepSHAP interpretation to obtain a set of importance scores over peaks for the prediction of binding. This is done using [make_shap_scores.py](src/tfmodisco/make_shap_scores.py). We run the following commands:
+
+```
+python -m tfmodisco.make_shap_scores \
+	-m $modelpath \
+	-f $filesspecpath \
+	-dn $numtasks \
+	-i $taskindex \
+	-o output_path/multitask_imp_scores.h5
+
+python -m tfmodisco.make_shap_scores \
+	-m $modelpath \
+	-f $filesspecpath \
+	-dn $numtasks \
+	-mn 1 \
+	-i $taskindex \
+	-o output_path/singletask_imp_scores.h5
+```
+
+Here, `modelpath` is the path to the model to run predictions on, and `numtasks` is the number of tasks for the TF. Note that even for multi-task models, we extract importance scores for a single task at a time (although the `-i` option may be omitted to extract importance scores for the aggregate of all tasks).
+
+For each model (and each experiment/task in each multi-task model), this gives an HDF5 containing the importance scores over all peaks for the task, for both the profile-head and count-head predictions.
+
 ### Running TF-MoDISco for *de novo* motif discovery
+
+Now that we have the DeepSHAP scores for each experiment, we can run TF-MoDISco to perform *de novo* motif discovery. For each set of importance scores, we run the following command:
+
+```
+python -m tfmodisco.run_tfmodisco \
+	$impscorepath \
+	-k $hypscorekey \
+	-o output_path/tfmodisco_results.h5 \
+	-s output_path/seqlets_file.fasta \
+	-p output_path/plots
+```
+
+Here, `impscorepath` is the path to the DeepSHAP scores. `hypscorekey` is either `profile_hyp_scores` or `count_hyp_scores`, to run TF-MoDISco on the importance scores from the profile head or count head, respectively.
 
 ### Running the TF-MoDISco motif instance caller
 
@@ -86,3 +237,16 @@ For kind of model (multi-task or single-task), we perform hyperparameter search 
 ### Motif syntax/grammar derivation using *in silico* simulations
 
 ### Generation of specific biological plots
+
+
+
+
+
+
+
+
+
+
+
+
+

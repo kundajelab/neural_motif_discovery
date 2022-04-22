@@ -1,0 +1,7 @@
+{
+    "train": {
+        "data_num_tasks": 4,
+        "counts_loss_weight": 3.889,
+        "learning_rate": 0.001227
+    }
+}

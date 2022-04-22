@@ -1,0 +1,6 @@
+{
+	"train": {
+		"learning_rate": {"dist": [-5, -1, true]},
+		"counts_loss_weight": {"dist": [0, 3, true]}
+	}
+}

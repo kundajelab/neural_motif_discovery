@@ -1,0 +1,20 @@
+{
+	"peak_beds": [
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_ENCSR000BGK_HepG2_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_ENCSR000BKP_H1_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_ENCSR000BRF_A549_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_ENCSR000BSA_HCT116_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_ENCSR000BSK_SK-N-SH_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_ENCSR000BSU_MCF-7_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_ENCSR000BVO_T47D_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_ENCSR000DYS_GM12878_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_ENCSR000EBZ_H1_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_ENCSR000EEI_HepG2_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_ENCSR000EGN_K562_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_ENCSR000EIB_SK-N-SH_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_ENCSR196HGZ_liver_all_peakints.bed.gz",
+		"/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_ENCSR837GTK_liver_all_peakints.bed.gz"
+	],
+	"profile_hdf5": "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/JUND/JUND_profiles.h5"
+}
+

@@ -1,0 +1,10 @@
+{
+	"peak_beds": [
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/SPI1/SPI1_ENCSR000BGQ_GM12878_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/SPI1/SPI1_ENCSR000BGW_K562_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/SPI1/SPI1_ENCSR000BIJ_GM12891_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/SPI1/SPI1_ENCSR000BUW_HL-60_all_peakints.bed.gz"
+	],
+	"profile_hdf5": "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/SPI1/SPI1_profiles.h5"
+}
+

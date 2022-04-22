@@ -1,0 +1,13 @@
+{
+	"peak_beds": [
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1/NR3C1_ENCSR000BHE_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1/NR3C1_ENCSR000BHF_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1/NR3C1_ENCSR000BHG_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1/NR3C1_ENCSR000BJC_Ishikawa_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1/NR3C1_ENCSR000BJR_A549_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1/NR3C1_ENCSR325DER_K562_all_peakints.bed.gz",
+        "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1/NR3C1_ENCSR494UQJ_K562_all_peakints.bed.gz"
+	],
+	"profile_hdf5": "/users/amtseng/tfmodisco/data/processed/ENCODE/labels/NR3C1/NR3C1_profiles.h5"
+}
+
