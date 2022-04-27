@@ -199,7 +199,7 @@ if __name__ == "__main__":
     import feature.make_profile_dataset as make_profile_dataset
     import keras.utils
     import tqdm
-    from plot.viz_sequence as viz_sequence
+    import plot.viz_sequence as viz_sequence
 
     # files_spec_path = "/users/amtseng/tfmodisco/data/processed/ENCODE/config/SPI1/SPI1_training_paths.json"
     # model_path = "/users/amtseng/tfmodisco/models/trained_models/multitask_profile/SPI1_multitask_profile_fold7/1/model_ckpt_epoch_8.h5"

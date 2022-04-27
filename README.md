@@ -533,6 +533,8 @@ This generates the figures for FOXA2/CEBP and FOXA2/HNF4 spacing constraints.
 
 We used task 0 in E2F6 and task 0 in MAX (both multi-task fine-tuned models).
 
+The script [extract_motif_reads.py](src/motif/extract_motif_reads.py) was used to extract the E2F6 and MAX ChIP-seq reads at E2F6 and MAX motif instances.
+
 [motif_simulations_e2f6_and_max.ipynb](notebooks/figures/vignettes/motif_simulations_e2f6_and_max.ipynb):
 This generates the figures for E2F6/MAX motifs on their predicted binding responses.
 
