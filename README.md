@@ -546,6 +546,12 @@ We used task 3 and task 6 for MAFK (both from the same multi-task fine-tuned mod
 [motif_simulations_mafk.ipynb](notebooks/figures/vignettes/motif_simulations_mafk.ipynb):
 This generates the figures for MAFK binding responses at various motifs.
 
+[expression_of_mafs_hepg2_k562.ipynb](notebooks/figures/vignettes/expression_of_mafs_hepg2_k562.ipynb):
+This computes the expression of various MAF-family TFs and cofactors between HepG2 and K562 from downloaded ENCODE expression files.
+
+[dhs_signal_at_MAFK_seqlets.ipynb](notebooks/figures/vignettes/dhs_signal_at_MAFK_seqlets.ipynb):
+This generates plots depicting the DNase hypersensitivity and ATAC accessibility signals at instances of the TMARE and CsMBE motifs, using downloaded ENCODE DNase/ATAC-seq tracks.
+
 #### Figure 8: ZNF248 motifs in transposable elements
 
 [ZNF248_pwm_vs_cwm.ipynb](notebooks/figures/vignettes/ZNF248_pwm_vs_cwm.ipynb):
